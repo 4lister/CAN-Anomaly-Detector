@@ -216,7 +216,7 @@ The compiled binary `anomaly_processor` will appear in the project root.
 pip install tensorflow numpy pandas matplotlib scikit-learn
 ```
 
-### 4. Train the LSTM model (optional, pre-trained artifacts may be in `lstm/`)
+### 4. Train the LSTM model (optional, pre-trained artifacts exist in `lstm/`)
 
 ```bash
 python LSTMAnomaly.py
