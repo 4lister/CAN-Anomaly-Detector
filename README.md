@@ -292,9 +292,6 @@ No. The included `bad_rpm.csv` and `output.csv` datasets, together with `candump
 **Can I add a new detection algorithm?**
 Yes. Subclass `AnomalyPredictor` (see `anomalypredictor.h`), implement the required interface, and register the class in `main.cpp` or the processor thread setup.
 
-**Why are `.vs`, `.vscode`, and `.qtc_clangd` folders committed?**
-IDE configuration folders for Visual Studio, VS Code, and Qt Creator were not excluded in `.gitignore`. They can be safely deleted.
-
 ---
 
 ## Author
