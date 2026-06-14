@@ -5,9 +5,13 @@
 на максимум по колонкам, посчитанный по обучающему файлу (train-only) —
 тестовые выбросы (например, speed=555) в эталон не попадают.
 
+Окна берутся со ВСЕГО обучающего файла и затем случайно прореживаются до
+MAX_WINDOWS — так в обучение попадают все режимы (и город, и трасса), а не
+только начало файла.
+
 Запуск:
-    python train.py                 # параметры из config_new.json
-    MAX_ROWS=80000 python train.py   # ограничить число строк (скорость)
+    python train.py                    # параметры из config_new.json
+    MAX_WINDOWS=120000 python train.py  # размер обучающей выборки окон
 """
 import os
 import json
@@ -34,7 +38,9 @@ def main():
     seq_len = cfg['data']['sequence_length']
     epochs = int(cfg['training']['epochs'])
     batch_size = int(cfg['training']['batch_size'])
-    max_rows = int(os.environ.get('MAX_ROWS', '80000'))
+    # Совместимость: MAX_WINDOWS (новое), MAX_ROWS (старое имя).
+    max_windows = int(os.environ.get('MAX_WINDOWS',
+                                     os.environ.get('MAX_ROWS', '120000')))
 
     train_file = os.path.join('data', cfg['data']['filename'])
     df = pd.read_csv(train_file)[cols].values.astype(float)
@@ -44,8 +50,14 @@ def main():
     mx[mx == 0] = 1.0
     print(f">> train file: {train_file}, rows={len(df)}, mx={mx}", flush=True)
 
-    data = df[:max_rows]
-    windows = build_windows(data, seq_len, mx)
+    # Окна по ВСЕМУ файлу, затем случайная выборка — покрываем все режимы.
+    windows = build_windows(df, seq_len, mx)
+    print(f">> total windows over full file: {len(windows)}", flush=True)
+    if len(windows) > max_windows:
+        rng = np.random.default_rng(42)
+        idx = np.sort(rng.choice(len(windows), size=max_windows, replace=False))
+        windows = windows[idx]
+
     x = windows[:, :-1]
     y = windows[:, -1, 0]
     print(f">> training windows: x={x.shape}, y={y.shape}, "

@@ -254,13 +254,17 @@ inference, with validation split and early stopping):
 
 ```powershell
 cd lstm
-.venv311\Scripts\python.exe train.py          # epochs/batch from config_new.json
-# limit rows for speed:  $env:MAX_ROWS="80000"; .venv311\Scripts\python.exe train.py
+.venv311\Scripts\python.exe train.py             # epochs/batch from config_new.json
+# change sample size:  $env:MAX_WINDOWS="120000"; .venv311\Scripts\python.exe train.py
 ```
 
-The previous model is backed up to `longlong.h5.bak`. Training on 80 k windows
-for ~12 epochs on CPU takes a few minutes and drives validation MSE down to
-~1e-5, which removes the systematic prediction bias the original 1-epoch model had.
+Windows are sampled across the **whole** training file (not just its head), so
+every regime — idle, city, highway — is represented. The previous model is
+backed up to `longlong.h5.bak`. Training on ~120 k windows drives validation MSE
+to ~1e-5 and removes the systematic bias the original 1-epoch model had.
+Sampling the full file instead of the first rows cut self-detections on the
+training set from ~6500 to ~430 (the remaining few are the most extreme
+high-speed transients).
 
 ---
 
