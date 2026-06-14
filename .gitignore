@@ -91,3 +91,7 @@ lstm/data/_window.csv
 *.bak
 lstm/train.log
 lstm/_eval_*.py
+
+# Генерируемые графики детектора (showcase — корневой ano.png)
+lstm/ano.png
+lstm/*_series.png
