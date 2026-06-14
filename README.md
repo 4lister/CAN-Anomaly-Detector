@@ -20,7 +20,6 @@ A hybrid platform for anomaly detection on vehicle CAN bus data. The system arch
 - [Installation](#installation)
 - [Usage](#usage)
 - [Input Formats](#input-formats)
-- [Output](#output)
 - [FAQ](#faq)
 - [Author](#author)
 - [License](#license)
@@ -403,22 +402,6 @@ Paths are passed on the command line (no more hardcoded paths):
 timestamp,rpm,speed,throttle,...
 1609459200,850,0,0,...
 ```
-
----
-
-## Output
-
-Detected anomalies are written to `anomalies.csv`:
-
-```csv
-timestamp,signal,value,predictor,severity
-1609460012,rpm,9500,STATISTICAL,HIGH
-1609460035,rpm,9800,LSTM,HIGH
-```
-
-The LSTM trainer produces a reconstruction error plot (`ano.png`) with a threshold line marking anomalous windows.
-
-![Anomaly Detection Plot](./ano.png)
 
 ---
 
