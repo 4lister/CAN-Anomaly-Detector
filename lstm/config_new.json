@@ -11,6 +11,10 @@
 		"train_test_split": 0.50,
 		"normalise": true
 	},
+	"anomaly": {
+		"threshold_sigmas": 8,
+		"robust": true
+	},
 	"training": {
 		"epochs": 1,
 		"batch_size": 512

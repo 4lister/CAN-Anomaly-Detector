@@ -220,11 +220,24 @@ py -3.11 -m venv lstm\.venv311
 lstm\.venv311\Scripts\python.exe -m pip install -r lstm\requirements.txt
 
 cd lstm
-.venv311\Scripts\python.exe LSTMAnomaly.py
+.venv311\Scripts\python.exe LSTMAnomaly.py                 # default: data/input.csv
+.venv311\Scripts\python.exe LSTMAnomaly.py data\AT_from_1_to_2.csv   # any CSV
 ```
 
-It loads `longlong.h5`, runs over `data/input.csv`, prints the anomaly count
-and writes the reconstruction plot to `lstm/ano.png`.
+It loads `longlong.h5`, runs over the chosen CSV, applies a robust detection
+threshold (median + k·MAD, with systematic-bias correction), prints the
+anomaly count and window indices, and writes a two-panel plot to `lstm/ano.png`
+(signal vs prediction, and reconstruction error with the threshold line).
+
+Detection is configurable in `config_new.json`:
+
+```json
+"anomaly": { "threshold_sigmas": 8, "robust": true }
+```
+
+On the bundled data this cleanly separates the injected fault: `input.csv`
+(contains an impossible `vehicle_speed = 555`) flags ~1300 windows around the
+spike, while the clean `AT_from_1_to_2.csv` flags **0** (no false positives).
 
 ---
 

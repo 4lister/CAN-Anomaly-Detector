@@ -17,14 +17,30 @@ def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 
-def plot_results(predicted_data, true_data, out_path):
-    fig = plt.figure(facecolor='white')
-    ax = fig.add_subplot(111)
-    ax.plot(true_data, label='True Data')
-    ax.plot(predicted_data, label='Prediction')
-    plt.legend()
-    plt.savefig(out_path)
-    plt.close()
+def plot_results(predicted_data, true_data, deviation, threshold, anomalies, out_path):
+    """Две панели: ряд (true/pred) и ошибка реконструкции с порогом и отметками."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), facecolor='white',
+                                   sharex=True)
+    ax1.plot(true_data, label='True Data', linewidth=0.8)
+    ax1.plot(predicted_data, label='Prediction', linewidth=0.8)
+    ax1.set_ylabel('signal (normalised)')
+    ax1.legend(loc='upper right')
+
+    ax2.plot(deviation, label='Reconstruction error', color='tab:gray',
+             linewidth=0.8)
+    ax2.axhline(threshold, color='tab:orange', linestyle='--',
+                label=f'threshold = {threshold:.3f}')
+    idx = np.where(anomalies)[0]
+    if idx.size:
+        ax2.scatter(idx, deviation[idx], color='red', s=10, zorder=3,
+                    label=f'anomalies ({idx.size})')
+    ax2.set_ylabel('|pred - true|')
+    ax2.set_xlabel('window index')
+    ax2.legend(loc='upper right')
+
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
 
 
 class LSTMAnomaly:
@@ -59,6 +75,11 @@ class LSTMAnomaly:
         self.cols = self.configs['data']['columns']
         self.seq_len = self.configs['data']['sequence_length']
         self.normalise = self.configs['data'].get('normalise', True)
+
+        # Параметры детекции (с дефолтами, если секции нет в конфиге).
+        anomaly_cfg = self.configs.get('anomaly', {})
+        self.k = float(anomaly_cfg.get('threshold_sigmas', 8.0))
+        self.robust = bool(anomaly_cfg.get('robust', True))
 
         # Эталон нормализации считаем по обучающему файлу один раз,
         # чтобы масштаб совпадал с тем, на котором обучалась модель.
@@ -95,6 +116,22 @@ class LSTMAnomaly:
             windows = windows / mx
         return windows
 
+    def _threshold(self, deviation):
+        """Порог детекции по ошибке реконструкции.
+
+        robust=True: медиана + k * 1.4826 * MAD — устойчив к редким
+        огромным выбросам, которые иначе раздувают mean/std и маскируют
+        умеренные аномалии. Иначе — классический mean + k * std.
+        """
+        if self.robust:
+            med = np.median(deviation)
+            mad = np.median(np.abs(deviation - med))
+            scale = 1.4826 * mad
+            if scale == 0.0:  # вырожденный случай — почти всё совпало
+                scale = np.std(deviation)
+            return med + self.k * scale
+        return np.mean(deviation) + self.k * np.std(deviation)
+
     def predict(self, csv_path):
         """Анализирует окно, записанное C++, и возвращает число аномалий."""
         print(">> predict on", csv_path, flush=True)
@@ -121,17 +158,30 @@ class LSTMAnomaly:
             predictions = self.model.predict_point_by_point(x)
             predictions = np.asarray(predictions).reshape(-1)
 
-            std = np.std(y, ddof=1) if len(y) > 1 else 0.0
-            if std == 0.0:
-                return 0
+            # У модели есть систематическое смещение (prediction идёт по форме,
+            # но сдвинут). Убираем его робастно — по медиане, чтобы редкие
+            # аномалии не влияли на оценку сдвига. Тогда ошибка реконструкции
+            # отражает расхождение формы, а не постоянный bias.
+            bias = np.median(predictions - y)
+            predictions = predictions - bias
+            print(f">> bias correction = {bias:.4f}", flush=True)
 
             deviation = np.abs(predictions - y)
-            anomaly_count = int(np.sum(deviation > 2 * std))
+            threshold = self._threshold(deviation)
+            anomalies = deviation > threshold
+            anomaly_count = int(np.sum(anomalies))
 
             out_plot = os.path.join(self.base_dir, 'ano.png')
-            plot_results(predictions, y, out_plot)
+            plot_results(predictions, y, deviation, threshold, anomalies, out_plot)
 
-            print(">>> Python: anomalies =", anomaly_count, flush=True)
+            idx = np.where(anomalies)[0]
+            preview = ", ".join(str(int(i)) for i in idx[:10])
+            print(f">>> Python: anomalies = {anomaly_count} "
+                  f"(threshold={threshold:.4f}, robust={self.robust}, k={self.k})",
+                  flush=True)
+            if anomaly_count:
+                print(f">>> anomaly window indices (first 10): {preview}",
+                      flush=True)
             return anomaly_count
 
         except Exception as e:
@@ -143,8 +193,11 @@ class LSTMAnomaly:
 def main():
     ano = LSTMAnomaly()
     ano.setup()
-    # Самостоятельный прогон по тестовому файлу из конфига.
-    test_file = os.path.join('data', ano.configs['data']['filename_test'])
+    # Можно указать CSV аргументом: python LSTMAnomaly.py data/AT_from_1_to_2.csv
+    if len(sys.argv) > 1:
+        test_file = sys.argv[1]
+    else:
+        test_file = os.path.join('data', ano.configs['data']['filename_test'])
     print("anomalies:", ano.predict(test_file))
 
 
