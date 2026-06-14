@@ -290,29 +290,47 @@ channels (`lf/rf/lr/rr_wheel_s`, `accel_pedal`).
 
 ### Example detections
 
-Each plot: top — true signal vs LSTM prediction; bottom — reconstruction error
-with the fixed threshold (dashed) and flagged windows (red).
+How to read each plot — **top panel:** the true normalised `vehicle_speed`
+(blue) against the LSTM one-step prediction (orange); **bottom panel:** the
+reconstruction error `|pred − true|` (grey), the fixed threshold (dashed orange),
+and the windows the detector flags (red).
 
-**Normal driving** (`AT_from_1_to_2`) — prediction tracks the signal, error stays
-under the threshold, nothing flagged:
+**Normal driving** (`AT_from_1_to_2`)
 
 ![Normal driving](docs/example_normal.png)
 
-**Injected fault** (`input.csv`, impossible `vehicle_speed = 555`) — a sharp error
-spike, flagged tightly around the injection:
+The orange prediction sits exactly on top of the blue signal across the whole
+drive, including the idle stretches and the sharp accelerations. The error stays
+a flat ~0.005 band and the occasional single spikes at gear changes never form a
+dense enough cluster to cross the density rule — **0 windows flagged, no false
+positives.**
+
+**Injected fault** (`input.csv` — an impossible `vehicle_speed = 555`)
 
 ![Injected speed fault](docs/example_injection.png)
 
-**Sudden acceleration** (`3_sudden_accelerate`) — the model lags at the abrupt
-accelerations; the density filter picks up the intermittent bursts:
+A single huge error spike (~4.0, ~200× the normal band) at the injected sample.
+The detector flags a tight cluster right around it and nothing elsewhere — the
+textbook **point anomaly**.
+
+**Sudden acceleration** (`3_sudden_accelerate`)
 
 ![Sudden acceleration fault](docs/example_sudden_accel.png)
 
-**Brake/tire fault** (`brakes_malfunction_tire`) — **not detected**: the error
-stays low because the fault is not observable in the `vehicle_speed` forecast
-(would need wheel-speed channels):
+Here the model briefly *overshoots* at each abrupt acceleration, producing
+**bursts of short error spikes** rather than one long run. A plain
+"N-in-a-row" rule would miss this; the density filter (≥100 crossings within a
+500-window span) catches all three burst regions — a **collective anomaly**.
+
+**Brake/tire fault** (`brakes_malfunction_tire`) — honest miss
 
 ![Brake fault — missed](docs/example_brakes.png)
+
+The prediction still tracks `vehicle_speed` well, so the error never rises and
+**nothing is flagged.** The fault is real but its signature is in the
+*consistency between wheel speeds*, which this single-signal speed forecast
+cannot see — detecting it needs a multivariate model over the wheel-speed
+channels. This matches the limitation noted in the original project's evaluation.
 
 ---
 
