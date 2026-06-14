@@ -80,6 +80,8 @@ class LSTMAnomaly:
         anomaly_cfg = self.configs.get('anomaly', {})
         self.k = float(anomaly_cfg.get('threshold_sigmas', 8.0))
         self.robust = bool(anomaly_cfg.get('robust', True))
+        # Минимальная длина «подряд» — отсекает одиночные транзиенты.
+        self.min_consecutive = int(anomaly_cfg.get('min_consecutive', 25))
 
         # Эталон нормализации считаем по обучающему файлу один раз,
         # чтобы масштаб совпадал с тем, на котором обучалась модель.
@@ -132,6 +134,29 @@ class LSTMAnomaly:
             return med + self.k * scale
         return np.mean(deviation) + self.k * np.std(deviation)
 
+    @staticmethod
+    def _apply_persistence(flags, n):
+        """Оставляет только серии из >= n подряд идущих превышений порога.
+
+        Реальные неисправности держатся несколько окон, а одиночные всплески
+        (резкое переключение передачи и т.п.) фильтруются.
+        """
+        if n <= 1:
+            return flags
+        out = np.zeros_like(flags)
+        i, length = 0, len(flags)
+        while i < length:
+            if flags[i]:
+                j = i
+                while j < length and flags[j]:
+                    j += 1
+                if j - i >= n:
+                    out[i:j] = True
+                i = j
+            else:
+                i += 1
+        return out
+
     def predict(self, csv_path):
         """Анализирует окно, записанное C++, и возвращает число аномалий."""
         print(">> predict on", csv_path, flush=True)
@@ -168,8 +193,10 @@ class LSTMAnomaly:
 
             deviation = np.abs(predictions - y)
             threshold = self._threshold(deviation)
-            anomalies = deviation > threshold
+            raw = deviation > threshold
+            anomalies = self._apply_persistence(raw, self.min_consecutive)
             anomaly_count = int(np.sum(anomalies))
+            filtered_out = int(np.sum(raw) - anomaly_count)
 
             out_plot = os.path.join(self.base_dir, 'ano.png')
             plot_results(predictions, y, deviation, threshold, anomalies, out_plot)
@@ -177,7 +204,9 @@ class LSTMAnomaly:
             idx = np.where(anomalies)[0]
             preview = ", ".join(str(int(i)) for i in idx[:10])
             print(f">>> Python: anomalies = {anomaly_count} "
-                  f"(threshold={threshold:.4f}, robust={self.robust}, k={self.k})",
+                  f"(threshold={threshold:.4f}, robust={self.robust}, k={self.k}, "
+                  f"min_consecutive={self.min_consecutive}, "
+                  f"transients_filtered={filtered_out})",
                   flush=True)
             if anomaly_count:
                 print(f">>> anomaly window indices (first 10): {preview}",

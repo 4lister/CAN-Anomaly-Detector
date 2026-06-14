@@ -232,13 +232,18 @@ anomaly count and window indices, and writes a two-panel plot to `lstm/ano.png`
 Detection is configurable in `config_new.json`:
 
 ```json
-"anomaly": { "threshold_sigmas": 8, "robust": true }
+"anomaly": { "threshold_sigmas": 8, "robust": true, "min_consecutive": 25 }
 ```
 
-On the bundled data the detector locates the injected fault sharply: `input.csv`
-(contains an impossible `vehicle_speed = 555`) flags ~1700 windows tightly around
-the spike, while the clean `AT_from_1_to_2.csv` only flags brief transients at
-sharp gear changes (~0.3 %). Raise `threshold_sigmas` to suppress those.
+`min_consecutive` reports a fault only when the threshold is exceeded for that
+many windows in a row — sustained faults persist, brief transients (e.g. a gear
+change) are dropped.
+
+On the bundled data this gives a clean separation: `input.csv` (contains an
+impossible `vehicle_speed = 555`) flags ~1700 windows tightly around the spike,
+while the clean `AT_from_1_to_2.csv` flags **0** — its sharp-transition transients
+(runs ≤ 20 windows) are filtered, whereas the injected fault forms runs of
+600–1100 windows.
 
 ---
 
