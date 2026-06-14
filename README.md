@@ -197,37 +197,60 @@ make -j$(nproc)
 
 ### 3. Install Python dependencies
 
-```bash
-pip install tensorflow numpy pandas matplotlib scikit-learn
-```
-
-### 4. Train LSTM model
-
-Pre-trained artifacts are available in `lstm/`. To retrain:
+Pinned, tested versions are in `lstm/requirements.txt`:
 
 ```bash
-python LSTMAnomaly.py
+pip install -r lstm/requirements.txt
 ```
+
+> The pre-trained model `lstm/longlong.h5` was saved with **Keras 2**. Use
+> **Python 3.11 + TensorFlow 2.15** (as pinned). On Python 3.12+ only
+> TensorFlow 2.16+ (Keras 3) is available, which may fail to load the legacy `.h5`.
 
 ---
 
-## Usage
+## Quick start: LSTM detector standalone (no C++ build)
 
-```bash
-# Run on a candump log file
-./anomaly_processor --input path/to/candump.log
+The LSTM detector runs on its own — no Qt or compiler needed. This is the
+fastest way to see it working (verified on Windows + Python 3.11):
 
-# Batch mode over a directory of logs
-./anomaly_processor --dir path/to/logs/
+```powershell
+# from the repo root
+py -3.11 -m venv lstm\.venv311
+lstm\.venv311\Scripts\python.exe -m pip install -r lstm\requirements.txt
 
-# Live CAN via Arduino serial proxy
-./anomaly_processor --serial /dev/ttyUSB0
-
-# Train / evaluate LSTM model
-python LSTMAnomaly.py
+cd lstm
+.venv311\Scripts\python.exe LSTMAnomaly.py
 ```
 
-> Exact CLI flags depend on `main.cpp` configuration. Run `--help` if available.
+It loads `longlong.h5`, runs over `data/input.csv`, prints the anomaly count
+and writes the reconstruction plot to `lstm/ano.png`.
+
+---
+
+## Usage (full C++ pipeline)
+
+The C++ binary currently drives the LSTM predictor over a CSV via `FileReceiver`.
+Paths are passed on the command line (no more hardcoded paths):
+
+```bash
+./anomaly_processor \
+  --project-dir /path/to/CAN-Anomaly-Detector \
+  --input  lstm/data/input.csv \
+  --output anomalies.csv
+```
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `-p, --project-dir` | Repo root (contains `lstm/`) | current dir |
+| `-i, --input` | Source CSV to replay | `<lstm>/data/input.csv` |
+| `-w, --work` | Window file C++ writes / Python reads | `<lstm>/data/_window.csv` |
+| `-o, --output` | Anomalies CSV | `<project>/anomalies.csv` |
+| `--lstm-dir` | Dir with module, config, model | `<project>/lstm` |
+| `--venv-site-packages` | Extra `site-packages` for `PYTHONPATH` | — |
+
+> Note: the `candump`, Arduino-serial and directory receivers exist as classes
+> but are **not yet wired into `main.cpp`** — only `FileReceiver` is active.
 
 ---
 
