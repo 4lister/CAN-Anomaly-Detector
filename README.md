@@ -224,26 +224,49 @@ cd lstm
 .venv311\Scripts\python.exe LSTMAnomaly.py data\AT_from_1_to_2.csv   # any CSV
 ```
 
-It loads `longlong.h5`, runs over the chosen CSV, applies a robust detection
-threshold (median + k·MAD, with systematic-bias correction), prints the
-anomaly count and window indices, and writes a two-panel plot to `lstm/ano.png`
-(signal vs prediction, and reconstruction error with the threshold line).
+It loads `longlong.h5`, runs over the chosen CSV, prints the anomaly count and
+writes a two-panel plot to `lstm/ano.png` (signal vs prediction, and the
+reconstruction error with the threshold line and flagged windows).
 
-Detection is configurable in `config_new.json`:
+### How detection works
+
+1. **Bias correction** — the model's prediction is recentred on the truth
+   (subtract the median residual), so the error reflects shape divergence, not a
+   constant offset.
+2. **Fixed threshold from normal data** — computed once at `setup()` as a high
+   percentile of the reconstruction error over the *training* file. Using a fixed
+   baseline (instead of a per-file threshold) prevents a fault from inflating —
+   and hiding under — its own threshold.
+3. **Density filter** — a window is flagged only inside a region where at least
+   `density_min_count` of the surrounding `density_window` windows cross the
+   threshold. This catches *intermittent* faults (a sudden-acceleration fault is a
+   burst of short spikes, not one long run) while rejecting isolated transients.
 
 ```json
-"anomaly": { "threshold_sigmas": 8, "robust": true, "min_consecutive": 25 }
+"anomaly": {
+  "threshold_percentile": 99.9,
+  "density_window": 500,
+  "density_min_count": 100
+}
 ```
 
-`min_consecutive` reports a fault only when the threshold is exceeded for that
-many windows in a row — sustained faults persist, brief transients (e.g. a gear
-change) are dropped.
+### Results on real Mazda6 data
 
-On the bundled data this gives a clean separation: `input.csv` (contains an
-impossible `vehicle_speed = 555`) flags ~1700 windows tightly around the spike,
-while the clean `AT_from_1_to_2.csv` flags **0** — its sharp-transition transients
-(runs ≤ 20 windows) are filtered, whereas the injected fault forms runs of
-600–1100 windows.
+Evaluated against normal and faulty captures (incl. the
+[Automotive-CAN-Data](https://github.com/SergeyStaroletov/Automotive-CAN-Data) set):
+
+| Dataset | Type | Flagged windows |
+| --- | --- | --- |
+| `AT_from_1_to_2`, `long`, `usual_drive` | normal | **0** |
+| `input.csv` (injected `speed = 555`) | fault | 220 |
+| `3_sudden_accelerate` | fault | 297 |
+| `brakes_malfunction_tire` | fault | 0 (see note) |
+
+Zero false positives on all normal captures; the speed-injection and
+sudden-acceleration faults are detected. The brake/tire fault is **not** caught —
+its signature lives in wheel-speed consistency, not in the `vehicle_speed`
+forecast, so detecting it would need a multivariate model over the extra CAN
+channels (`lf/rf/lr/rr_wheel_s`, `accel_pedal`).
 
 ---
 

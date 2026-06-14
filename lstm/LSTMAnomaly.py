@@ -59,6 +59,7 @@ class LSTMAnomaly:
         self.seq_len = None
         self.normalise = True
         self.mx = None  # эталон нормализации (по обучающим данным, если доступны)
+        self.fixed_threshold = None  # порог из распределения ошибки на train
 
     def setup(self, base_dir=None):
         """Однократная инициализация: конфиг + модель + веса."""
@@ -78,13 +79,19 @@ class LSTMAnomaly:
 
         # Параметры детекции (с дефолтами, если секции нет в конфиге).
         anomaly_cfg = self.configs.get('anomaly', {})
+        # Перцентиль ошибки на нормальных (train) данных для фиксированного порога.
+        self.threshold_percentile = float(anomaly_cfg.get('threshold_percentile', 99.9))
+        # Детекция по плотности: в скользящем окне density_window должно быть
+        # не меньше density_min_count пробоев порога.
+        self.density_window = int(anomaly_cfg.get('density_window', 500))
+        self.density_min_count = int(anomaly_cfg.get('density_min_count', 100))
+        # Фолбэк-параметры, если фиксированный порог посчитать не удалось.
         self.k = float(anomaly_cfg.get('threshold_sigmas', 8.0))
         self.robust = bool(anomaly_cfg.get('robust', True))
-        # Минимальная длина «подряд» — отсекает одиночные транзиенты.
-        self.min_consecutive = int(anomaly_cfg.get('min_consecutive', 25))
 
         # Эталон нормализации считаем по обучающему файлу один раз,
         # чтобы масштаб совпадал с тем, на котором обучалась модель.
+        train = None
         train_file = os.path.join('data', self.configs['data']['filename'])
         if os.path.exists(train_file):
             train = pd.read_csv(train_file)[self.cols].values.astype(float)
@@ -99,7 +106,37 @@ class LSTMAnomaly:
         self.model.build_model(self.configs)
         self.model.load_model(os.path.join(self.base_dir, 'longlong.h5'))
         print(">> model loaded once", flush=True)
+
+        # Фиксированный порог из распределения ошибки на НОРМАЛЬНЫХ данных.
+        # Так фолт в тест-файле не может «спрятаться» под собственный раздутый порог.
+        if train is not None:
+            self.fixed_threshold = self._train_threshold(train)
+            print(f">> fixed threshold from train "
+                  f"(p{self.threshold_percentile}) = {self.fixed_threshold:.5f}",
+                  flush=True)
         return 0
+
+    def _train_threshold(self, train, n_sample=30000):
+        """Порог = высокий перцентиль ошибки реконструкции на обучающих данных.
+
+        Берём случайную выборку окон по всему train-файлу, считаем ошибку
+        (с той же bias-коррекцией, что в predict) и берём перцентиль.
+        """
+        n_windows = len(train) - self.seq_len
+        if n_windows <= 0:
+            return None
+        rng = np.random.default_rng(0)
+        count = min(n_sample, n_windows)
+        starts = rng.choice(n_windows, size=count, replace=False)
+        windows = np.array([train[i:i + self.seq_len] for i in starts], dtype=float)
+        if self.normalise:
+            windows = windows / self.mx
+        x = windows[:, :-1]
+        y = windows[:, -1, 0]
+        p = np.asarray(self.model.predict_point_by_point(x)).reshape(-1)
+        p = p - np.median(p - y)
+        dev = np.abs(p - y)
+        return float(np.percentile(dev, self.threshold_percentile))
 
     def _build_windows(self, data):
         """Из массива (N, dim) делает окна (M, seq_len, dim)."""
@@ -134,28 +171,22 @@ class LSTMAnomaly:
             return med + self.k * scale
         return np.mean(deviation) + self.k * np.std(deviation)
 
-    @staticmethod
-    def _apply_persistence(flags, n):
-        """Оставляет только серии из >= n подряд идущих превышений порога.
+    def _density_filter(self, raw):
+        """Детекция по плотности пробоев порога.
 
-        Реальные неисправности держатся несколько окон, а одиночные всплески
-        (резкое переключение передачи и т.п.) фильтруются.
+        Помечает участки, где в скользящем окне density_window набирается
+        не меньше density_min_count пробоев. Ловит прерывистые всплески
+        (например, резкий разгон — серия коротких всплесков, а не один
+        длинный участок), отсекая одиночные изолированные пробои.
         """
-        if n <= 1:
-            return flags
-        out = np.zeros_like(flags)
-        i, length = 0, len(flags)
-        while i < length:
-            if flags[i]:
-                j = i
-                while j < length and flags[j]:
-                    j += 1
-                if j - i >= n:
-                    out[i:j] = True
-                i = j
-            else:
-                i += 1
-        return out
+        w = self.density_window
+        if w <= 1 or self.density_min_count <= 1:
+            return raw
+        kernel = np.ones(w)
+        local = np.convolve(raw.astype(float), kernel, mode='same')
+        dense = local >= self.density_min_count
+        # Помечаем как аномалию только реальные пробои внутри плотных зон.
+        return raw & dense
 
     def predict(self, csv_path):
         """Анализирует окно, записанное C++, и возвращает число аномалий."""
@@ -192,9 +223,14 @@ class LSTMAnomaly:
             print(f">> bias correction = {bias:.4f}", flush=True)
 
             deviation = np.abs(predictions - y)
-            threshold = self._threshold(deviation)
+            # Фиксированный порог из train-распределения (если посчитан в setup),
+            # иначе фолбэк на адаптивный по текущему файлу.
+            if self.fixed_threshold is not None:
+                threshold = self.fixed_threshold
+            else:
+                threshold = self._threshold(deviation)
             raw = deviation > threshold
-            anomalies = self._apply_persistence(raw, self.min_consecutive)
+            anomalies = self._density_filter(raw)
             anomaly_count = int(np.sum(anomalies))
             filtered_out = int(np.sum(raw) - anomaly_count)
 
@@ -204,9 +240,10 @@ class LSTMAnomaly:
             idx = np.where(anomalies)[0]
             preview = ", ".join(str(int(i)) for i in idx[:10])
             print(f">>> Python: anomalies = {anomaly_count} "
-                  f"(threshold={threshold:.4f}, robust={self.robust}, k={self.k}, "
-                  f"min_consecutive={self.min_consecutive}, "
-                  f"transients_filtered={filtered_out})",
+                  f"(threshold={threshold:.5f} "
+                  f"[{'fixed' if self.fixed_threshold is not None else 'adaptive'}], "
+                  f"density {self.density_min_count}/{self.density_window}, "
+                  f"raw_crossings={int(np.sum(raw))})",
                   flush=True)
             if anomaly_count:
                 print(f">>> anomaly window indices (first 10): {preview}",

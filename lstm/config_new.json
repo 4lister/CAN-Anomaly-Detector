@@ -12,9 +12,11 @@
 		"normalise": true
 	},
 	"anomaly": {
+		"threshold_percentile": 99.9,
+		"density_window": 500,
+		"density_min_count": 100,
 		"threshold_sigmas": 8,
-		"robust": true,
-		"min_consecutive": 25
+		"robust": true
 	},
 	"training": {
 		"epochs": 15,
