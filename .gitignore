@@ -86,3 +86,8 @@ __pycache__/
 
 # Рабочий файл окна, который пишет C++ для Python
 lstm/data/_window.csv
+
+# Бэкапы модели и логи обучения
+*.bak
+lstm/train.log
+lstm/_eval_*.py

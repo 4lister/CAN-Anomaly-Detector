@@ -235,9 +235,27 @@ Detection is configurable in `config_new.json`:
 "anomaly": { "threshold_sigmas": 8, "robust": true }
 ```
 
-On the bundled data this cleanly separates the injected fault: `input.csv`
-(contains an impossible `vehicle_speed = 555`) flags ~1300 windows around the
-spike, while the clean `AT_from_1_to_2.csv` flags **0** (no false positives).
+On the bundled data the detector locates the injected fault sharply: `input.csv`
+(contains an impossible `vehicle_speed = 555`) flags ~1700 windows tightly around
+the spike, while the clean `AT_from_1_to_2.csv` only flags brief transients at
+sharp gear changes (~0.3 %). Raise `threshold_sigmas` to suppress those.
+
+---
+
+## Retraining the model
+
+`lstm/longlong.h5` ships pre-trained. To retrain (uses the same normalisation as
+inference, with validation split and early stopping):
+
+```powershell
+cd lstm
+.venv311\Scripts\python.exe train.py          # epochs/batch from config_new.json
+# limit rows for speed:  $env:MAX_ROWS="80000"; .venv311\Scripts\python.exe train.py
+```
+
+The previous model is backed up to `longlong.h5.bak`. Training on 80 k windows
+for ~12 epochs on CPU takes a few minutes and drives validation MSE down to
+~1e-5, which removes the systematic prediction bias the original 1-epoch model had.
 
 ---
 

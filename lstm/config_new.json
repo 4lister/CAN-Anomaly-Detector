@@ -16,7 +16,7 @@
 		"robust": true
 	},
 	"training": {
-		"epochs": 1,
+		"epochs": 15,
 		"batch_size": 512
 	},
 	"model": {
