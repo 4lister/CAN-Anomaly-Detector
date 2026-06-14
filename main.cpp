@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName("anomaly_processor");
 
-    setenv("PYTHONUNBUFFERED", "1", 1);
+    qputenv("PYTHONUNBUFFERED", "1");  // кроссплатформенно (setenv — только POSIX)
 
     QCommandLineParser parser;
     parser.setApplicationDescription("CAN Anomaly Detector");
@@ -67,10 +67,16 @@ int main(int argc, char *argv[]) {
         : projectDir + "/anomalies.csv";
 
     // PYTHONPATH: каталог модуля + при необходимости site-packages виртуального окружения.
+    // Разделитель списка путей зависит от ОС (';' на Windows, ':' на *nix).
+#ifdef Q_OS_WIN
+    const QChar pathSep = QLatin1Char(';');
+#else
+    const QChar pathSep = QLatin1Char(':');
+#endif
     QString pythonPath = lstmDir;
     const QString venv = parser.value(venvOpt);
     if (!venv.isEmpty())
-        pythonPath += QString(":") + venv;
+        pythonPath += pathSep + venv;
 
     qInfo() << "[Main] project-dir:" << projectDir;
     qInfo() << "[Main] lstm-dir   :" << lstmDir;

@@ -21,7 +21,7 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& csvPath,
     streamOut(nullptr)
 
 {
-    setenv("PYTHONPATH", pythonPath.toUtf8().constData(), 1);
+    qputenv("PYTHONPATH", pythonPath.toUtf8());  // кроссплатформенно (setenv — только POSIX)
 
     if (!Py_IsInitialized())
         Py_Initialize();

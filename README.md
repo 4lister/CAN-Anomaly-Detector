@@ -172,7 +172,10 @@ CAN-Anomaly-Detector/
 **C++ application:**
 
 - Qt 5.12+ or Qt 6.x (with `qmake`)
-- GCC / Clang with C++17 support
+- A C++17 compiler — GCC / Clang (Linux, macOS) or MSVC / MinGW (Windows)
+- A Python install **with development headers** (the app embeds CPython):
+  - Linux: `python3-dev`; macOS: framework Python; Windows: the standard
+    python.org installer (ships `include/` and `libs/pythonXY.lib`)
 - Linux (native SocketCAN), or macOS/Windows with an Arduino CAN bridge
 
 **Python LSTM trainer:**
@@ -190,9 +193,26 @@ cd CAN-Anomaly-Detector
 
 ### 2. Build C++ application
 
+The project file auto-detects the Python headers/libs by querying the
+interpreter, so the same `.pro` builds on Linux, macOS and Windows.
+
 ```bash
+# Linux / macOS
 qmake anomaly_processor.pro
 make -j$(nproc)
+```
+
+```powershell
+# Windows (from a Qt + compiler developer prompt)
+qmake anomaly_processor.pro
+nmake          # or: mingw32-make  (MinGW Qt kits)
+```
+
+To build against a specific interpreter (e.g. the venv that has TensorFlow),
+pass it to qmake:
+
+```bash
+qmake PYTHON=/path/to/python anomaly_processor.pro
 ```
 
 ### 3. Install Python dependencies

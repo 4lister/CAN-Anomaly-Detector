@@ -3,7 +3,7 @@ QT += core gui
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 QT += serialport concurrent
 
-CONFIG += c++11 console
+CONFIG += c++17 console
 CONFIG -= app_bundle
 
 # The following define makes your compiler emit warnings if you use
@@ -17,16 +17,35 @@ DEFINES += QT_DEPRECATED_WARNINGS
 # You can also select to disable deprecated APIs only up to a certain version of Qt.
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
-#python binding
-#INCLUDEPATH += /usr/local/Cellar/python@3.8/3.8.2/Frameworks/Python.framework/Versions/3.8/include/python3.8
-#LIBS+= -L/usr/local/Cellar/python@3.8/3.8.2/Frameworks/Python.framework/Versions/3.8/lib -lpython3.8
+# ---------------------------------------------------------------------------
+# Embedded Python (cross-platform).
+# Paths are auto-detected by querying the interpreter. Override the interpreter
+# with:  qmake PYTHON=/path/to/python   (e.g. a virtualenv with TensorFlow).
+# ---------------------------------------------------------------------------
+isEmpty(PYTHON) {
+    win32: PYTHON = python
+    else:  PYTHON = python3
+}
 
-INCLUDEPATH += /usr/include/python3.10
-LIBS += -lpython3.10
+PY_INC    = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_path('include'))")
+PY_LDVER  = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LDVERSION') or '')")
+PY_VERTAG = $$system($$PYTHON -c "import sysconfig; print((sysconfig.get_config_var('VERSION') or '').replace('.',''))")
 
-CONFIG+=debug
-#
-QMAKE_CXXFLAGS += -g
+isEmpty(PY_INC): error("Python headers not found. Is '$$PYTHON' on PATH? Override with qmake PYTHON=...")
+INCLUDEPATH += "$$PY_INC"
+
+win32 {
+    # On Windows the import library lives in <base>/libs as pythonXY.lib.
+    PY_LIBDIR = $$system($$PYTHON -c "import sys, os; print(os.path.join(sys.base_prefix, 'libs'))")
+    LIBS += -L"$$PY_LIBDIR" -lpython$$PY_VERTAG
+} else {
+    # Linux / macOS: use the configured LIBDIR and ABI-tagged lib name.
+    PY_LIBDIR = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+    LIBS += -L"$$PY_LIBDIR" -lpython$$PY_LDVER
+}
+
+# Отладочная информация добавляется автоматически в debug-сборке для каждой
+# платформы (-g для GCC/Clang, /Zi для MSVC), ручной -g не нужен.
 
 
 SOURCES += \
