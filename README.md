@@ -288,6 +288,32 @@ its signature lives in wheel-speed consistency, not in the `vehicle_speed`
 forecast, so detecting it would need a multivariate model over the extra CAN
 channels (`lf/rf/lr/rr_wheel_s`, `accel_pedal`).
 
+### Example detections
+
+Each plot: top — true signal vs LSTM prediction; bottom — reconstruction error
+with the fixed threshold (dashed) and flagged windows (red).
+
+**Normal driving** (`AT_from_1_to_2`) — prediction tracks the signal, error stays
+under the threshold, nothing flagged:
+
+![Normal driving](docs/example_normal.png)
+
+**Injected fault** (`input.csv`, impossible `vehicle_speed = 555`) — a sharp error
+spike, flagged tightly around the injection:
+
+![Injected speed fault](docs/example_injection.png)
+
+**Sudden acceleration** (`3_sudden_accelerate`) — the model lags at the abrupt
+accelerations; the density filter picks up the intermittent bursts:
+
+![Sudden acceleration fault](docs/example_sudden_accel.png)
+
+**Brake/tire fault** (`brakes_malfunction_tire`) — **not detected**: the error
+stays low because the fault is not observable in the `vehicle_speed` forecast
+(would need wheel-speed channels):
+
+![Brake fault — missed](docs/example_brakes.png)
+
 ---
 
 ## Retraining the model

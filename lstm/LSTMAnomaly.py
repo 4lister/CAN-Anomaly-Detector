@@ -60,6 +60,7 @@ class LSTMAnomaly:
         self.normalise = True
         self.mx = None  # эталон нормализации (по обучающим данным, если доступны)
         self.fixed_threshold = None  # порог из распределения ошибки на train
+        self.make_plot = True  # в пуле процессов выключаем (нельзя писать один ano.png)
 
     def setup(self, base_dir=None):
         """Однократная инициализация: конфиг + модель + веса."""
@@ -234,8 +235,9 @@ class LSTMAnomaly:
             anomaly_count = int(np.sum(anomalies))
             filtered_out = int(np.sum(raw) - anomaly_count)
 
-            out_plot = os.path.join(self.base_dir, 'ano.png')
-            plot_results(predictions, y, deviation, threshold, anomalies, out_plot)
+            if self.make_plot:
+                out_plot = os.path.join(self.base_dir, 'ano.png')
+                plot_results(predictions, y, deviation, threshold, anomalies, out_plot)
 
             idx = np.where(anomalies)[0]
             preview = ", ".join(str(int(i)) for i in idx[:10])
