@@ -87,4 +87,5 @@ HEADERS += \
 #INCLUDEPATH += -L/usr/include
 
 DISTFILES += \
-    LSTMAnomaly.py
+    lstm/LSTMAnomaly.py \
+    lstm/requirements.txt

@@ -6,12 +6,13 @@
 #endif
 
 #include <QObject>
+#include <QString>
 
 class PredictWorker : public QObject {
     Q_OBJECT
 
 public:
-    explicit PredictWorker(void* instance);
+    explicit PredictWorker(void* instance, const QString& csvPath);
 
 public Q_SLOTS:
     void run();
@@ -21,6 +22,7 @@ Q_SIGNALS:
 
 private:
     void* pInstance;
+    QString csvPath;
 };
 
 #endif // PREDICTWORKER_H

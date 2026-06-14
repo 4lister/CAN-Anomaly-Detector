@@ -74,3 +74,15 @@ Thumbs.db
 /.qtc.clangd
 /.vs
 /.vscode
+
+# Build artifacts and editor leftovers (не должны быть в репозитории)
+/anomaly_processor
+moc_predefs.h
+*.save
+*.Копия*
+*~Копия*
+__pycache__/
+.venv*/
+
+# Рабочий файл окна, который пишет C++ для Python
+lstm/data/_window.csv

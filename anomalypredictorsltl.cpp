@@ -8,8 +8,12 @@ AnomalyPredictorSLTL::AnomalyPredictorSLTL() {}
 void AnomalyPredictorSLTL::getNewDataToPredict(CarState carstate) {
   for (ISLTLProperty *prop : this->properties) {
     if (!prop->checkPropertyForCurrentData(carstate)) {
-      // property violation
-      exit(1);
+      // Нарушение SLTL-свойства — сообщаем об аномалии, а не убиваем процесс.
+      qWarning() << "[SLTL] Property violation at"
+                 << QDateTime::fromMSecsSinceEpoch(carstate.timestamp).toString()
+                 << "| speed:" << carstate.speed
+                 << "| rpm:" << carstate.rpm
+                 << "| gear:" << carstate.gear;
     }
   }
 }

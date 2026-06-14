@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <algorithm>
 #include "icansubscriber.h"
 
 
@@ -46,12 +47,15 @@ CarState FileReceiver::parseLine(const QString& line) {
     QStringList tokens = line.split(',');
     CarState state;
 
-    if (tokens.size() < 5) return state;
-
     int rpmIdx = columnMap.value("vehicle_rpm", -1);
     int speedIdx = columnMap.value("vehicle_speed", -1);
     int gearIdx = columnMap.value("gear", -1);
     int timestampIdx = columnMap.value("timestamp", -1);  // если есть timestamp
+
+    // Достаточно, чтобы строка покрывала максимальный нужный индекс колонки,
+    // а не жёсткие "5 полей" (C++ пишет всего 4 колонки).
+    int maxIdx = std::max({rpmIdx, speedIdx, gearIdx, timestampIdx});
+    if (maxIdx < 0 || tokens.size() <= maxIdx) return state;
 
     bool ok1, ok2, ok3;
     state.rpm = (rpmIdx >= 0) ? tokens.value(rpmIdx).toInt(&ok1) : 0;

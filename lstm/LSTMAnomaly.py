@@ -1,182 +1,152 @@
+# -*- coding: utf-8 -*-
 import os
 import json
 import time
-import math
 import sys
 import traceback
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # без GUI-бэкенда — работаем в фоновом потоке
 import matplotlib.pyplot as plt
+import pandas as pd
 from core.data_processor import DataLoader
 from core.model import Model
+
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
-def plot_results(predicted_data, true_data):
+
+def plot_results(predicted_data, true_data, out_path):
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax.plot(true_data, label='True Data')
     ax.plot(predicted_data, label='Prediction')
     plt.legend()
-    timestr = time.strftime("%Y%m%d-%H%M%S")
-    plt.savefig(timestr + '_series.png')
+    plt.savefig(out_path)
     plt.close()
 
-def plot_results_multiple(predicted_data, true_data, prediction_len):
-    fig = plt.figure(facecolor='white')
-    ax = fig.add_subplot(111)
-    ax.plot(true_data, label='True Data')
-    # Pad the list of predictions to shift it in the graph to its correct start
-    for i, data in enumerate(predicted_data):
-        padding = [None for _ in range(i * prediction_len)]
-        ax.plot(padding + data, label='Prediction')
-    plt.legend()
-    plt.close()
 
 class LSTMAnomaly:
+    """LSTM-детектор аномалий.
+
+    setup() вызывается один раз — загружает конфиг, строит модель и веса.
+    predict(csv_path) вызывается на каждое окно, записанное C++-частью.
+    """
+
     def __init__(self):
         eprint("call INIT")
+        self.base_dir = None
+        self.configs = None
+        self.model = None
+        self.cols = None
+        self.seq_len = None
+        self.normalise = True
+        self.mx = None  # эталон нормализации (по обучающим данным, если доступны)
 
-    def setup(self):
-        print("call setup")
+    def setup(self, base_dir=None):
+        """Однократная инициализация: конфиг + модель + веса."""
+        # Базовый каталог приходит из C++; если нет — берём каталог этого файла.
+        self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+        os.chdir(self.base_dir)
+        print(">> base dir:", self.base_dir, flush=True)
 
-    def predict(self):
-        print("call predict", flush=True)
+        cfg_path = os.path.join(self.base_dir, 'config_new.json')
+        with open(cfg_path, 'r') as f:
+            self.configs = json.load(f)
+        print(">> loaded config", flush=True)
+
+        self.cols = self.configs['data']['columns']
+        self.seq_len = self.configs['data']['sequence_length']
+        self.normalise = self.configs['data'].get('normalise', True)
+
+        # Эталон нормализации считаем по обучающему файлу один раз,
+        # чтобы масштаб совпадал с тем, на котором обучалась модель.
+        train_file = os.path.join('data', self.configs['data']['filename'])
+        if os.path.exists(train_file):
+            train = pd.read_csv(train_file)[self.cols].values.astype(float)
+            self.mx = np.max(train, axis=0)
+            self.mx[self.mx == 0] = 1.0
+            print(">> normalisation reference from", train_file, flush=True)
+        else:
+            eprint(">> WARNING: train file not found, "
+                   "will normalise per-window:", train_file)
+
+        self.model = Model()
+        self.model.build_model(self.configs)
+        self.model.load_model(os.path.join(self.base_dir, 'longlong.h5'))
+        print(">> model loaded once", flush=True)
+        return 0
+
+    def _build_windows(self, data):
+        """Из массива (N, dim) делает окна (M, seq_len, dim)."""
+        n = len(data)
+        if n <= self.seq_len:
+            return None
+        windows = np.array(
+            [data[i:i + self.seq_len] for i in range(n - self.seq_len)],
+            dtype=float)
+
+        mx = self.mx
+        if mx is None:  # фолбэк: нормализация по самому окну
+            mx = np.max(data, axis=0)
+            mx[mx == 0] = 1.0
+        if self.normalise:
+            windows = windows / mx
+        return windows
+
+    def predict(self, csv_path):
+        """Анализирует окно, записанное C++, и возвращает число аномалий."""
+        print(">> predict on", csv_path, flush=True)
         try:
-            os.chdir('/home/qwerty/CAN-Anomaly-Detector-master/lstm')
-            print(">> changed working directory", flush=True)
-            configs = json.load(open('/home/qwerty/CAN-Anomaly-Detector-master/lstm/config_new.json', 'r'))
-            print(">> loaded config", flush=True)
-        except FileNotFoundError:
-            eprint("Error: config_new.json not found.")
-            return -1
-        except json.JSONDecodeError:
-            eprint("Error: Failed to decode JSON.")
-            return -1
+            if not os.path.exists(csv_path):
+                eprint("Error: window csv not found:", csv_path)
+                return -1
 
-        try:
-            if not os.path.exists(configs['model']['save_dir']):
-                os.makedirs(configs['model']['save_dir'])
-                print(f">> created save dir: {configs['model']['save_dir']}", flush=True)
+            df = pd.read_csv(csv_path)
+            missing = [c for c in self.cols if c not in df.columns]
+            if missing:
+                eprint("Error: columns missing in window:", missing)
+                return -1
 
-            data = DataLoader(
-                os.path.join('data', configs['data']['filename']),
-                os.path.join('data', configs['data']['filename_test']),
-                configs['data']['train_test_split'],
-                configs['data']['columns']
-            )
-            print(">> data loaded", flush=True)
+            data = df[self.cols].values.astype(float)
+            windows = self._build_windows(data)
+            if windows is None:
+                print(">> not enough rows for a window, skip", flush=True)
+                return 0
 
-            model = Model()
-            model.build_model(configs)
-            model.load_model('longlong.h5')
-            print(">> model loaded", flush=True)
+            x = windows[:, :-1]
+            y = windows[:, -1, 0]  # прогнозируем первую колонку
 
-            x_test, y_test = data.get_test_data(
-                seq_len=configs['data']['sequence_length'],
-                normalise=configs['data']['normalise']
-            )
-            print(">> got test data", flush=True)
+            predictions = self.model.predict_point_by_point(x)
+            predictions = np.asarray(predictions).reshape(-1)
 
-            print(">> before model.predict_point_by_point", flush=True)
-            predictions = model.predict_point_by_point(x_test)
-            print(">> after model.predict_point_by_point", flush=True)
-            print(">> got predictions", flush=True)
-            std = np.std(y_test, ddof=1)
-            diff0 = (predictions[0] - y_test[0])
+            std = np.std(y, ddof=1) if len(y) > 1 else 0.0
+            if std == 0.0:
+                return 0
 
-            for i in range(len(predictions)):
-                predictions[i] -= diff0
+            deviation = np.abs(predictions - y)
+            anomaly_count = int(np.sum(deviation > 2 * std))
 
-            anomaly_count = 0
-            for i in range(len(predictions)):
-                d = abs(predictions[i] - y_test[i])
-                if d > 2 * std:
-                    anomaly_count += 1
-                    diff = (predictions[i] - y_test[i])
-                    for j in range(i, len(predictions)):
-                        predictions[j] -= diff
-
-            plot_results(predictions, y_test)
+            out_plot = os.path.join(self.base_dir, 'ano.png')
+            plot_results(predictions, y, out_plot)
 
             print(">>> Python: anomalies =", anomaly_count, flush=True)
-            
-            return int(anomaly_count)
+            return anomaly_count
 
         except Exception as e:
             eprint(f"Unhandled error in predict(): {e}")
             traceback.print_exc()
-            return -1 
+            return -1
 
-"""class LSTMAnomaly:
-    def __init__(self):
-        self.ano = None
-        self.configs = None
-        self.mx = None
-        self.x_test = None
-        self.y_test = None
-        self.index = 0
-        self.total = 0
 
-    def setup(self):
-        print(">> changed working directory", flush=True)
-        os.chdir('/home/qwerty/CAN-Anomaly-Detector-master/lstm')
-        print(">> loaded config", flush=True)
-        self.configs = json.load(open('config_new.json'))
-
-        data = DataLoader(
-            os.path.join('data', self.configs['data']['filename']),
-            os.path.join('data', self.configs['data']['filename_test']),
-            self.configs['data']['train_test_split'],
-            self.configs['data']['columns']
-        )
-
-        print(">> data loaded", flush=True)
-
-        self.mx = data.mx
-        self.model = Model()
-        self.model.build_model(self.configs)
-        self.model.load_model('longlong.h5')
-        print(">> model loaded", flush=True)
-
-        self.x_test, self.y_test = data.get_test_data(
-            seq_len=self.configs['data']['sequence_length'],
-            normalise=self.configs['data']['normalise']
-        )
-        self.total = len(self.x_test)
-        print(f">> ready to stream predictions: total = {self.total}", flush=True)
-
-    def stream(self, _):
-
-        if self.index >= self.total:
-            print(">>> Python: streaming finished")
-            return 0
-
-        try:
-            x = self.x_test[self.index:self.index+1]
-            y_true = self.y_test[self.index][0]
-            pred = self.model.model.predict(x, verbose=0)[0][0]
-            std = np.std(self.y_test)
-
-            deviation = abs(pred - y_true)
-            print(f"{self.index+1}/{self.total} - pred: {pred:.3f}, true: {y_true:.3f}, dev: {deviation:.3f}", flush=True)
-
-            self.index += 1
-
-            return 1 if deviation > 2 * std else 0
-        except Exception as e:
-            print(f"[Python] stream error: {e}")
-            traceback.print_exc()
-            return -1 """
-
-    
 def main():
     ano = LSTMAnomaly()
     ano.setup()
-    ano.predict()
-    """for _ in range(ano.total):
-        ano.stream(None)
-        time.sleep(0)  # симуляция стриминга"""
+    # Самостоятельный прогон по тестовому файлу из конфига.
+    test_file = os.path.join('data', ano.configs['data']['filename_test'])
+    print("anomalies:", ano.predict(test_file))
+
 
 if __name__ == '__main__':
     main()

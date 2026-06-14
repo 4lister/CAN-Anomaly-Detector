@@ -59,7 +59,10 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& csvPath,
         return;
     }
 
-    PyObject* setup = PyObject_CallMethod(pInstance, "setup", nullptr);
+    // Передаём базовый каталог, чтобы Python грузил config/модель относительно него,
+    // а не из абсолютного пути.
+    PyObject* setup = PyObject_CallMethod(
+        pInstance, "setup", "s", classPath.toUtf8().constData());
     if (!setup) {
         qCritical() << "Ошибка при вызове setup()";
         PyErr_Print();
@@ -97,6 +100,7 @@ void AnomalyPredictorLSTM::onCarStateUpdate(const CarState& state) {
 }
 
 void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
+    size_t queueSize = 0;
     {
         QMutexLocker locker(&mut);
 
@@ -115,15 +119,23 @@ void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
             recentStates.pop_front();
         }
 
+        queueSize = dataQueue.size();
+
         qDebug() << "DATA:" << state.speed << state.rpm << state.gear;
-        qDebug() << "Queue size now:" << dataQueue.size();
-        qDebug() << "Busy status:" << busy;
+        qDebug() << "Queue size now:" << queueSize;
+        qDebug() << "Busy status:" << busy.load();
     }
 
-    // Запускаем предсказание строго по 300 новых точек
-    if (!busy && dataQueue.size() - lastPredictionIndex >= static_cast<size_t>(numPointsToPredict)) {
-        busy = true;
+    // Запускаем предсказание строго по 300 новых точек.
+    // Атомарно «захватываем» предсказание: только один поток пройдёт дальше.
+    if (queueSize - lastPredictionIndex < static_cast<size_t>(numPointsToPredict))
+        return;
 
+    bool expected = false;
+    if (!busy.compare_exchange_strong(expected, true))
+        return;  // предсказание уже выполняется
+
+    {
         std::deque<QString> snapshot;
         {
             QMutexLocker locker(&mut);
@@ -151,7 +163,7 @@ void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
         lastPredictionIndex = dataQueue.size();
 
         QThread* thread = new QThread;
-        PredictWorker* worker = new PredictWorker(pInstance);
+        PredictWorker* worker = new PredictWorker(pInstance, inputCsvPath);
         worker->moveToThread(thread);
 
         QObject::connect(thread, &QThread::started, worker, &PredictWorker::run);

@@ -14,6 +14,7 @@
 #include "icansubscriber.h"
 #include <queue>
 #include <mutex>
+#include <atomic>
 #include <deque>
 
 
@@ -40,7 +41,7 @@ private:
     int numPointsToPredict;
     int currentPoints;
     bool lastPredictionWasAnomaly;
-    bool busy;
+    std::atomic<bool> busy;
     bool predictionCompleted;
     bool predictionStarted;
     //std::queue<CarState> dataQueue;
