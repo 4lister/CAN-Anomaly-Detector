@@ -416,6 +416,25 @@ chunk — a clearer demonstration than the within-Mazda6 city→highway case.
 > Only `speed`/`rpm` are used, because cross-vehicle datasets rarely share a
 > decoded `gear` signal.
 
+#### Before vs after fine-tuning — fewer false alarms
+
+`bmw_before_after.py` ties this back to the detector. The cross-vehicle drift
+makes the frozen Mazda6 model raise many **false anomalies** on BMW maneuvers.
+After fine-tuning on the first half of the BMW drive, detection is re-run on the
+**held-out second half** with the **same fixed threshold** (no train-on-test):
+
+```powershell
+.venv311\Scripts\python.exe bmw_before_after.py --csv path\to\dataset1_car.csv `
+    --speed-col "Speed (MPH)" --rpm-col "Engine RPM" --speed-unit mph --label bmw
+```
+
+![Before vs after fine-tuning (BMW)](docs/bmw_before_after.png)
+
+The drift-induced false-alarm clusters (top) largely drop below the threshold
+after adaptation (bottom) — roughly half as many flagged windows. This is the
+detector-level view of the same effect: **drift → false alarms → fine-tuning
+reduces them.**
+
 ---
 
 ## Usage (full C++ pipeline)
