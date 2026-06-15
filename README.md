@@ -393,6 +393,33 @@ base model can't already absorb. Incremental fine-tuning would matter more under
 stronger distribution shift — a different vehicle, a changed sensor set, or a
 longer prediction horizon.
 
+### Cross-vehicle test (the stronger drift case)
+
+To get *genuine* distribution shift, `cross_vehicle.py` trains a 2-feature
+(`vehicle_speed`, `vehicle_rpm`) model on the Mazda6 data and then streams a
+**different car** — the BMW M235i from the
+[smartphone_driving_dataset](https://github.com/cloudpose/smartphone_driving_dataset)
+(its CAN log already carries decoded speed/RPM):
+
+```powershell
+cd lstm
+.venv311\Scripts\python.exe cross_vehicle.py --csv path\to\dataset1_car.csv `
+    --speed-col "Speed (MPH)" --rpm-col "Engine RPM" --speed-unit mph --label bmw
+```
+
+![Cross-vehicle adaptation (BMW)](docs/cross_vehicle_bmw.png)
+
+The Mazda6 model on BMW data sits **well above** its own in-distribution error
+(real cross-vehicle drift), and online fine-tuning pulls it back down chunk by
+chunk — a clearer demonstration than the within-Mazda6 city→highway case.
+
+> The other-vehicle CSV isn't bundled (different licence) — download it and pass
+> `--csv`. Only `speed`/`rpm` are used because cross-vehicle datasets rarely
+> share a decoded `gear` signal. The Alfa Romeo Giulia logs from
+> [ReCAN](https://github.com/Cyberdefence-Lab-Murcia/ReCAN) were evaluated too but
+> are **byte-level and unlabelled** (no documented speed/RPM mapping), so they'd
+> need full reverse-engineering against ground truth — out of scope here.
+
 ---
 
 ## Usage (full C++ pipeline)
