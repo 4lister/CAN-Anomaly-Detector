@@ -163,7 +163,6 @@ CAN-Anomaly-Detector/
 ├── lstm/longlong.h5                  # Pre-trained model weights
 ├── lstm/core/{model,data_processor,utils}.py   # Keras model + data loader
 ├── lstm/data/                        # CSV datasets
-├── stat/                             # Statistical baseline scripts
 │
 ├── docs/                             # README images (example plots)
 └── anomaly_processor.pro             # QMake project file
