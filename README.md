@@ -2,9 +2,8 @@
 
 A hybrid platform for anomaly detection on vehicle CAN bus data. The system architecture supports three independent detection layers — statistical analysis, SLTL formal verification, and LSTM-based deep learning — running in parallel. The LSTM predictor is the primary contribution of this project; the statistical and SLTL components provide the integration scaffolding and a baseline for comparison.
 
-[![Language](https://img.shields.io/badge/C%2B%2B-45%25-blue?logo=cplusplus)](https://isocpp.org/)
-[![Language](https://img.shields.io/badge/Python-38%25-yellow?logo=python)](https://python.org/)
-[![Language](https://img.shields.io/badge/C-14%25-lightgrey?logo=c)](https://en.wikipedia.org/wiki/C_(programming_language))
+[![Language](https://img.shields.io/badge/C%2B%2B-49%25-blue?logo=cplusplus)](https://isocpp.org/)
+[![Language](https://img.shields.io/badge/Python-48%25-yellow?logo=python)](https://python.org/)
 [![Build](https://img.shields.io/badge/build-QMake-green)](https://doc.qt.io/qt-6/qmake-manual.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](./LICENSE)
 
@@ -18,7 +17,10 @@ A hybrid platform for anomaly detection on vehicle CAN bus data. The system arch
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Installation](#installation)
-- [Usage](#usage)
+- [Quick start: LSTM detector standalone](#quick-start-lstm-detector-standalone-no-c-build)
+- [Retraining the model](#retraining-the-model)
+- [Online fine-tuning (IncLSTM-inspired)](#online-fine-tuning-inclstm-inspired)
+- [Usage (full C++ pipeline)](#usage-full-c-pipeline)
 - [Input Formats](#input-formats)
 - [FAQ](#faq)
 - [Author](#author)
@@ -76,8 +78,8 @@ The LSTM predictor (`AnomalyPredictorLSTM`, `LSTMAnomaly.py`) is the primary imp
           ▼               ▼                    ▼
 ┌─────────────┐  ┌──────────────┐   ┌──────────────────┐
 │  Statistical│  │    SLTL      │   │   LSTM Predictor │
-│  Predictor  │  │  Predictor   │   │  (Python/ONNX)   │
-│ (scaffolding│  │ (scaffolding)│   │  ← implemented   │
+│  Predictor  │  │  Predictor   │   │ (embedded CPython│
+│ (scaffolding│  │ (scaffolding)│   │  ← implemented)  │
 └──────┬──────┘  └──────┬───────┘   └────────┬─────────┘
        └────────────────┴──────────────────────┘
                           │
@@ -99,8 +101,8 @@ The multithreaded architecture uses Qt's thread model — worker threads, proces
 | Build system              | QMake (Qt Project)                              |
 | Threading & I/O           | Qt 5/6 (`QThread`, `QMutex`, `QFile`)     |
 | Formal verification layer | SLTL — custom C++ scaffolding                  |
-| ML model training         | Python 3, TensorFlow / Keras (LSTM autoencoder) |
-| ML model runtime          | C++ inference via loaded model or subprocess    |
+| ML model training         | Python 3.11, TensorFlow 2.15 / Keras 2 (stacked LSTM forecaster) |
+| ML model runtime          | Embedded CPython called from C++ via the Python C API |
 | Hardware interface        | Arduino serial proxy (CAN-to-USB bridge)        |
 | Log format                | `candump` (SocketCAN)                         |
 | Output format             | CSV                                             |
@@ -149,18 +151,26 @@ CAN-Anomaly-Detector/
 ├── # Output
 ├── csvanomalylogger.{h,cpp}          # Logs anomalies to CSV
 ├── anomalies.csv                     # Sample anomaly output
-├── output.csv                        # Processed signal output
-├── bad_rpm.csv                       # Labeled anomalous RPM dataset
-├── ano.png                           # LSTM anomaly detection plot
+├── ano.png                           # Showcase detection plot
 │
-├── # Python / ML
-├── LSTMAnomaly.py                    # LSTM model training & evaluation
-├── lstm/                             # Saved model weights and artifacts
-├── stat/                             # Statistical baseline configs
+├── # Python / ML  (lstm/)
+├── lstm/LSTMAnomaly.py               # Detector: setup() + predict() (bias, fixed threshold, density)
+├── lstm/train.py                     # Train / retrain the model (full-file window sampling)
+├── lstm/incremental.py               # IncLSTM-inspired online fine-tuning + replay buffer
+├── lstm/incremental_demo.py          # Drift-adaptation experiment
+├── lstm/config_new.json              # Model + detection config
+├── lstm/requirements.txt             # Pinned Python deps (Py 3.11 / TF 2.15)
+├── lstm/longlong.h5                  # Pre-trained model weights
+├── lstm/core/{model,data_processor,utils}.py   # Keras model + data loader
+├── lstm/data/                        # CSV datasets
+├── stat/                             # Statistical baseline scripts
 │
-├── anomaly_processor.pro             # QMake project file
-└── anomaly_processor                 # Compiled binary (Linux)
+├── docs/                             # README images (example plots)
+└── anomaly_processor.pro             # QMake project file
 ```
+
+> Build artifacts (`anomaly_processor`, `moc_*`, `lstm/ano.png`, `lstm/.venv*`)
+> are git-ignored and regenerated locally.
 
 ---
 
@@ -449,10 +459,10 @@ A concrete `Mazda6CarData` implementation is included. Other vehicles can be add
 SLTL (Signal Linear Temporal Logic) allows temporal properties of vehicle signals to be expressed as logical formulas — for example, *"speed must increase within N frames after RPM increases."* A concrete example is implemented in `SpeedIncreasesAfterRPMIncreasesProperty`. The SLTL layer is structural scaffolding; the LSTM predictor is the primary implemented detector.
 
 **Do I need a real vehicle to test this?**
-No. The included `bad_rpm.csv` and `output.csv` datasets, together with `candump` replay mode, support full offline testing.
+No. The CSV datasets in `lstm/data/` (plus the standalone Python runner) support full offline testing — see the [Quick start](#quick-start-lstm-detector-standalone-no-c-build).
 
 **How is the LSTM model integrated into the C++ runtime?**
-`AnomalyPredictorLSTM` handles inference in C++. The trained model (exported from `LSTMAnomaly.py`, stored in `lstm/`) is loaded at runtime. The inference mechanism — TensorFlow C API, ONNX, or subprocess — can be confirmed in `anomalypredictorlstm.cpp`.
+`AnomalyPredictorLSTM` embeds a CPython interpreter via the **Python C API** (`Python.h`). At startup it imports `LSTMAnomaly` and calls `setup()` once (loads `longlong.h5`); per window it calls `predict()` on a worker thread holding the GIL. See `anomalypredictorlstm.cpp` / `predictworker.cpp`.
 
 **Can I add a new detection algorithm?**
 Yes. Subclass `AnomalyPredictor` (see `anomalypredictor.h`), implement the required interface, and register the class in `main.cpp` or the processor thread setup.
