@@ -354,6 +354,38 @@ high-speed transients).
 
 ---
 
+## Online fine-tuning (IncLSTM-inspired)
+
+`incremental.py` implements the practical core of the IncLSTM idea: the model is
+updated **incrementally** on incoming windows with a small learning rate, and a
+**replay buffer** of past samples is mixed in on every update to guard against
+catastrophic forgetting. The current model keeps serving while the update runs,
+so it can be swapped in asynchronously.
+
+`incremental_demo.py` reproduces a drift experiment: a model trained on the
+low-speed **city** regime (and normalised by the city maximum) then meets
+**highway** data whose speeds run past that range. Two arms start from the same
+weights — one frozen, one fine-tuned online:
+
+```powershell
+cd lstm
+.venv311\Scripts\python.exe incremental_demo.py
+```
+
+![Online adaptation to drift](docs/incremental_adaptation.png)
+
+**Honest result:** where genuine drift occurs — the highest-speed, out-of-range
+chunks — the online-tuned model (green) drops below the static one (red), and the
+chunk after a hard region shows clear adaptation. The held-out city error
+(bottom) stays low, so the replay buffer does prevent forgetting. The gain is
+**modest and noisy**, though: one-step speed forecasting is inherently robust
+(the next value ≈ the current one at any scale), so there is little drift the
+base model can't already absorb. Incremental fine-tuning would matter more under
+stronger distribution shift — a different vehicle, a changed sensor set, or a
+longer prediction horizon.
+
+---
+
 ## Usage (full C++ pipeline)
 
 The C++ binary currently drives the LSTM predictor over a CSV via `FileReceiver`.
