@@ -413,12 +413,8 @@ The Mazda6 model on BMW data sits **well above** its own in-distribution error
 (real cross-vehicle drift), and online fine-tuning pulls it back down chunk by
 chunk — a clearer demonstration than the within-Mazda6 city→highway case.
 
-> The other-vehicle CSV isn't bundled (different licence) — download it and pass
-> `--csv`. Only `speed`/`rpm` are used because cross-vehicle datasets rarely
-> share a decoded `gear` signal. The Alfa Romeo Giulia logs from
-> [ReCAN](https://github.com/Cyberdefence-Lab-Murcia/ReCAN) were evaluated too but
-> are **byte-level and unlabelled** (no documented speed/RPM mapping), so they'd
-> need full reverse-engineering against ground truth — out of scope here.
+> Only `speed`/`rpm` are used, because cross-vehicle datasets rarely share a
+> decoded `gear` signal.
 
 ---
 
