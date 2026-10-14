@@ -578,6 +578,47 @@ timestamp,rpm,speed,throttle,...
 1609459200,850,0,0,...
 ```
 
+### Using a different dataset
+
+Both entry points read the CSV columns **by header name** (`vehicle_speed`,
+`vehicle_rpm`, `gear`; `timestamp` is optional):
+
+| Column           | Required | Fallback when missing |
+| ---------------- | -------- | --------------------- |
+| `vehicle_speed`  | yes      | `0.0`                 |
+| `vehicle_rpm`    | yes      | `0`                   |
+| `gear`           | yes      | `0`                   |
+| `timestamp`      | no       | synthesised (50 ms)   |
+
+Standalone Python (columns must match):
+
+```powershell
+cd lstm
+.venv311\Scripts\python.exe LSTMAnomaly.py data\my_dataset.csv
+```
+
+Full C++/Qt pipeline:
+
+```powershell
+.\release\anomaly_processor.exe -p . -i data\my_dataset.csv -o anomalies.csv `
+    --venv-site-packages lstm\.venv311\Lib\site-packages --replay-speed 5
+```
+
+Three things to keep in mind:
+
+1. **Column names** must be exactly `vehicle_speed`, `vehicle_rpm`, `gear`.
+   With other names (`Speed (MPH)`, `Engine RPM`) the detector sees zeros.
+   `bmw_before_after.py` already maps columns via `--speed-col` / `--rpm-col`;
+   the main `LSTMAnomaly.py` / `FileReceiver` do not — rename the columns or
+   ask for a mapping option.
+2. **Units** — the model is normalised by `mx=[138, 6405, 5]` (speed ~km/h, rpm,
+   gear). A dataset in other units (e.g. MPH) needs converting first, or the
+   scale mismatch causes false anomalies.
+3. **Cross-vehicle drift** — the model is trained on Mazda6; on another vehicle
+   the reconstruction error rises and yields false alarms (see
+   [Cross-vehicle test](#cross-vehicle-test-the-stronger-drift-case)). Fine-tuning
+   on the new vehicle may be needed.
+
 ---
 
 ## FAQ
