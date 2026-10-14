@@ -107,6 +107,11 @@ void AnomalyPredictorLSTM::addAnomalySubscriber(IAnomalySubscriber* subscriber) 
     }
 }
 
+bool AnomalyPredictorLSTM::canAcceptNewData() const {
+    // Свободен, если предсказание не выполняется в данный момент.
+    return !busy.load();
+}
+
 void AnomalyPredictorLSTM::notifyAnomalySubscribers(const CarState& state) {
     for (auto* sub : anomalySubscribers) {
         if (sub) sub->onAnomalyDetected(state);

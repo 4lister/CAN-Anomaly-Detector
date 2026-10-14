@@ -21,6 +21,10 @@ class FileReceiver : public QObject, public DataReceiver {
 public:
     FileReceiver(const QString& path, std::deque<CarState>* rows = nullptr);
 
+    // Множитель скорости проигрывания: >1 — быстрее реального времени,
+    // <=0 — без искусственных задержек (обработать файл максимально быстро).
+    void setReplaySpeed(double factor) { replaySpeed = factor; }
+
     void start();
     void enqueueData(const CanData& newData) override { Q_UNUSED(newData); }
     CanData askForNewData() override { return {}; }
@@ -45,9 +49,13 @@ private:
     int currentIndex;
     ICarData* car = nullptr;
     QVector<CarState> buffer;
+    double replaySpeed = 1.0;
 
 
     CarState parseLine(const QString& line);
+    // Разбирает значение колонки timestamp: число (эпоха в мс) или строку
+    // даты-времени ("2019-11-07 23:53:23.019"). 0 — если разобрать не удалось.
+    static unsigned long parseTimestamp(const QString& raw);
 
 };
 

@@ -5,7 +5,9 @@
 #include <QDebug>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QStringList>
 #include <algorithm>
+#include <cmath>
 #include "icansubscriber.h"
 
 
@@ -63,14 +65,39 @@ CarState FileReceiver::parseLine(const QString& line) {
     state.gear = (gearIdx >= 0) ? tokens.value(gearIdx).toInt(&ok3) : 0;
 
     if (timestampIdx >= 0) {
-        bool okTs;
-        state.timestamp = tokens.value(timestampIdx).toULong(&okTs);
-        if (!okTs) state.timestamp = 0;
+        state.timestamp = parseTimestamp(tokens.value(timestampIdx));
     } else {
         state.timestamp = 0;
     }
 
     return state;
+}
+
+unsigned long FileReceiver::parseTimestamp(const QString& raw) {
+    // В CSV значение может быть в кавычках: "2019-11-07 23:53:23.019".
+    const QString t = raw.trimmed().remove(QLatin1Char('"'));
+    if (t.isEmpty()) return 0;
+
+    // Числовая эпоха (мс) — как в искусственных/тестовых файлах.
+    bool ok = false;
+    const unsigned long numeric = t.toULong(&ok);
+    if (ok) return numeric;
+
+    // Строка даты-времени (штатный формат датасетов Mazda6).
+    static const QStringList formats = {
+        QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"),
+        QStringLiteral("yyyy-MM-dd HH:mm:ss.zz"),
+        QStringLiteral("yyyy-MM-dd HH:mm:ss"),
+        QStringLiteral("yyyy-MM-ddTHH:mm:ss.zzz"),
+        QStringLiteral("yyyy-MM-ddTHH:mm:ss"),
+    };
+    for (const QString& fmt : formats) {
+        const QDateTime dt = QDateTime::fromString(t, fmt);
+        if (dt.isValid()) {
+            return static_cast<unsigned long>(dt.toMSecsSinceEpoch());
+        }
+    }
+    return 0;
 }
 
 void FileReceiver::attachCarData(ICarData* carData) {
@@ -98,12 +125,13 @@ void FileReceiver::tick() {
     notifySubscribers(state);
 
     int delayMs = 1;
-    if (currentIndex + 1 < states.size()) {
-        unsigned long now = state.timestamp;
-        unsigned long next = states[currentIndex + 1].timestamp;
-        long delta = static_cast<long>(next - now);
+    if (replaySpeed <= 0.0) {
+        delayMs = 0;  // максимально быстро, без эмуляции реального времени
+    } else if (currentIndex + 1 < states.size()) {
+        const long delta = static_cast<long>(states[currentIndex + 1].timestamp) -
+                           static_cast<long>(state.timestamp);
         if (delta > 0 && delta < 1000) {
-            delayMs = static_cast<int>(delta);
+            delayMs = std::max(1, static_cast<int>(std::lround(delta / replaySpeed)));
         }
     }
 

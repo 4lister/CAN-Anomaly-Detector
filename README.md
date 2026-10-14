@@ -461,11 +461,27 @@ Paths are passed on the command line (no more hardcoded paths):
 | `-o, --output` | Anomalies CSV | `<project>/anomalies.csv` |
 | `--lstm-dir` | Dir with module, config, model | `<project>/lstm` |
 | `--venv-site-packages` | Extra `site-packages` for `PYTHONPATH` | — |
+| `--replay-speed` | Replay-rate multiplier: `>1` faster than real time, `<=0` no artificial delay | `1.0` |
+
+The receiver reads the CSV `timestamp` column either as a numeric epoch (ms)
+or as a date-time string (`2019-11-07 23:53:23.019`) and replays rows with the
+matching inter-sample delay. `--replay-speed` scales that delay: use a value
+like `--replay-speed 20` to review a long capture quickly, or `--replay-speed 0`
+to process the file as fast as the machine allows.
+
+> Note: at `--replay-speed 0` the file is fed faster than the model can infer,
+> so a predictor that is still busy skips ahead to the most recent window. Keep
+> the speed at `1.0` (or any rate the model keeps up with) when every window
+> must be scored — for the 3-column model that is comfortably below ~1000
+> rows/s.
 
 Each window of `numPointsToPredict` rows (300 by default) is packed
 in memory (`speed`, `rpm`, `gear`) and passed to the persistent
 predict worker thread, which calls `LSTMAnomaly.predict_rows()` —
 no intermediate CSV file is written.
+
+The process exits when the file has been fully read **and** the last
+prediction has completed.
 
 > Note: the `candump`, Arduino-serial and directory receivers exist as classes
 > but are **not yet wired into `main.cpp`** — only `FileReceiver` is active.

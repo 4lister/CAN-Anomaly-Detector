@@ -38,12 +38,17 @@ int main(int argc, char *argv[]) {
     QCommandLineOption venvOpt(
         "venv-site-packages",
         "Доп. путь site-packages (например, .venv) для PYTHONPATH.", "dir", "");
+    QCommandLineOption replaySpeedOpt(
+        "replay-speed",
+        "Множитель скорости проигрывания файла: >1 — быстрее реального "
+        "времени, <=0 — без задержек (максимально быстро).", "factor", "1.0");
 
     parser.addOption(projectDirOpt);
     parser.addOption(sourceOpt);
     parser.addOption(anomaliesOpt);
     parser.addOption(lstmDirOpt);
     parser.addOption(venvOpt);
+    parser.addOption(replaySpeedOpt);
     parser.process(app);
 
     const QString projectDir = QDir(parser.value(projectDirOpt)).absolutePath();
@@ -70,10 +75,14 @@ int main(int argc, char *argv[]) {
     if (!venv.isEmpty())
         pythonPath += pathSep + venv;
 
+    bool okSpeed = false;
+    const double replaySpeed = parser.value(replaySpeedOpt).toDouble(&okSpeed);
+
     qInfo() << "[Main] project-dir:" << projectDir;
     qInfo() << "[Main] lstm-dir   :" << lstmDir;
     qInfo() << "[Main] input      :" << inputCsv;
     qInfo() << "[Main] anomalies  :" << anomaliesCsv;
+    qInfo() << "[Main] replay-speed:" << (okSpeed ? replaySpeed : 1.0);
 
     if (!QFileInfo::exists(inputCsv)) {
         qCritical() << "[Main] Входной файл не найден:" << inputCsv;
@@ -82,6 +91,7 @@ int main(int argc, char *argv[]) {
 
     std::deque<CarState> dataRows;
     FileReceiver* dataReceiver = new FileReceiver(inputCsv, &dataRows);
+    dataReceiver->setReplaySpeed(okSpeed ? replaySpeed : 1.0);
 
     AnomalyPredictorLSTM* predictor =
         new AnomalyPredictorLSTM(pythonPath, "LSTMAnomaly", lstmDir);
@@ -91,14 +101,27 @@ int main(int argc, char *argv[]) {
     ICarData* car = new Mazda6CarData();
     car->setPredictor(predictor);
 
+    // Предиктор получает данные через car->onNewDataAvailable() (см.
+    // Mazda6CarData). Отдельная подписка предиктора на FileReceiver приводила
+    // бы к двойной доставке каждой строки — она не нужна.
     dataReceiver->attachCarData(car);
-    dataReceiver->addSubscriber(predictor);
 
-    QObject::connect(dataReceiver, &FileReceiver::finishedReading, [&]() {
-        QObject::connect(predictor, &AnomalyPredictorLSTM::predictionFinished, &app, [&]() {
-            qDebug() << "[Main] Последний батч обработан. Завершение.";
+    // Завершаем работу, когда файл прочитан И предиктор не занят.
+    // Раньше predictionFinished -> quit подключался только внутри обработчика
+    // finishedReading: если последний прогноз успевал завершиться раньше,
+    // соединение не создавалось и приложение не выходило вовсе.
+    bool readingFinished = false;
+    auto maybeQuit = [&]() {
+        if (readingFinished && predictor->canAcceptNewData()) {
+            qDebug() << "[Main] Все данные обработаны. Завершение.";
             app.quit();
-        });
+        }
+    };
+    QObject::connect(predictor, &AnomalyPredictorLSTM::predictionFinished,
+                     &app, maybeQuit);
+    QObject::connect(dataReceiver, &FileReceiver::finishedReading, &app, [&]() {
+        readingFinished = true;
+        maybeQuit();
     });
 
     dataReceiver->start();
