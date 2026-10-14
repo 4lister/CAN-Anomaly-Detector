@@ -13,7 +13,7 @@ class SpeedIncreasesAfterRPMIncreasesProperty : public ISLTLProperty {
 
  private:
   state currentState;
-  unsigned long t;
+  qint64 t;
   bool once = false;
 };
 

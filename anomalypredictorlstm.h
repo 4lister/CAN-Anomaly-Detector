@@ -31,7 +31,6 @@ public:
 
     void getNewDataToPredict(CarState state) override;
     void onCarStateUpdate(const CarState& state) override;
-    bool wasLastPredictionAnomaly() const { return lastPredictionWasAnomaly; }
     void addAnomalySubscriber(IAnomalySubscriber* subscriber);
     bool canAcceptNewData() const;
     void notifyAnomalySubscribers(const CarState& state);
@@ -39,7 +38,6 @@ public:
 private:
     size_t lastPredictionIndex = 0;
     int numPointsToPredict;
-    bool lastPredictionWasAnomaly;
     std::atomic<bool> busy;
     std::mutex queueMutex;
     std::deque<CarState> dataQueue;
@@ -62,7 +60,6 @@ private:
     PredictWorker* worker;
 
 Q_SIGNALS:
-    void anomalyDetected(CarState state);
     void predictionFinished();
     // Окно данных (упакованное в плоский массив) для worker-потока.
     void windowReady(const QVector<double>& packed);

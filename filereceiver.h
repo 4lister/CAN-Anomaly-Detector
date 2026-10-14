@@ -55,7 +55,7 @@ private:
     CarState parseLine(const QString& line);
     // Разбирает значение колонки timestamp: число (эпоха в мс) или строку
     // даты-времени ("2019-11-07 23:53:23.019"). 0 — если разобрать не удалось.
-    static unsigned long parseTimestamp(const QString& raw);
+    static qint64 parseTimestamp(const QString& raw);
 
 };
 

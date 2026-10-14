@@ -70,7 +70,7 @@ std::cout << "[Mazda6CarData] State: RPM=" << state.rpm
 void Mazda6CarData::maybeEmitCarState() {
   if (rpmValid && speedValid && tempValid) {
     CarState state;
-    state.timestamp = static_cast<unsigned long>(
+    state.timestamp = static_cast<qint64>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());

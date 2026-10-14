@@ -1,6 +1,7 @@
 #ifndef ICARDATA_H
 #define ICARDATA_H
 
+#include <QtGlobal>
 #include <deque>
 #include <functional>
 #include <map>
@@ -12,7 +13,9 @@ typedef std::vector<int> CanData;
 typedef std::deque<CanData> CanQueue;
 
 struct CarState {
-    unsigned long timestamp;
+    // qint64 (64 бита на всех платформах), а не unsigned long (32 бита на
+    // Windows) — иначе epoch-мс обрезается и в CSV попадают даты 1970 года.
+    qint64 timestamp;
     int rpm;
     int gear;
     double speed;

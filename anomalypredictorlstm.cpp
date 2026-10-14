@@ -15,7 +15,6 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& pythonPath,
                                            int windowSize)
     : lastPredictionIndex(0),
       numPointsToPredict(windowSize > 0 ? windowSize : 300),
-      lastPredictionWasAnomaly(false),
       busy(false),
       pModule(nullptr), pDict(nullptr), pClass(nullptr), pInstance(nullptr),
       mainThreadState(nullptr),
@@ -87,8 +86,7 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& pythonPath,
             this, [this](const QVector<int>& anomalyIndices) {
                 qDebug() << "[Predictor] Prediction complete. Anomalies:"
                          << anomalyIndices.size();
-                lastPredictionWasAnomaly = !anomalyIndices.isEmpty();
-                if (lastPredictionWasAnomaly) {
+                if (!anomalyIndices.isEmpty()) {
                     QMutexLocker locker(&mut);
                     // Пишем только пробойные точки зафиксированного окна.
                     for (int idx : anomalyIndices) {

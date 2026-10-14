@@ -38,7 +38,7 @@ FileReceiver::FileReceiver(const QString& path, std::deque<CarState>* rows)
 
     // Проставляем искусственные timestamp, если они не были в CSV
     if (!states.isEmpty() && states[0].timestamp == 0) {
-        unsigned long t0 = QDateTime::currentMSecsSinceEpoch();
+        qint64 t0 = QDateTime::currentMSecsSinceEpoch();
         for (int i = 0; i < states.size(); ++i) {
             states[i].timestamp = t0 + i * 50;  // условно 50 мс между точками
         }
@@ -73,14 +73,14 @@ CarState FileReceiver::parseLine(const QString& line) {
     return state;
 }
 
-unsigned long FileReceiver::parseTimestamp(const QString& raw) {
+qint64 FileReceiver::parseTimestamp(const QString& raw) {
     // В CSV значение может быть в кавычках: "2019-11-07 23:53:23.019".
     const QString t = raw.trimmed().remove(QLatin1Char('"'));
     if (t.isEmpty()) return 0;
 
     // Числовая эпоха (мс) — как в искусственных/тестовых файлах.
     bool ok = false;
-    const unsigned long numeric = t.toULong(&ok);
+    const qint64 numeric = t.toLongLong(&ok);
     if (ok) return numeric;
 
     // Строка даты-времени (штатный формат датасетов Mazda6).
@@ -94,7 +94,7 @@ unsigned long FileReceiver::parseTimestamp(const QString& raw) {
     for (const QString& fmt : formats) {
         const QDateTime dt = QDateTime::fromString(t, fmt);
         if (dt.isValid()) {
-            return static_cast<unsigned long>(dt.toMSecsSinceEpoch());
+            return dt.toMSecsSinceEpoch();
         }
     }
     return 0;
@@ -128,8 +128,7 @@ void FileReceiver::tick() {
     if (replaySpeed <= 0.0) {
         delayMs = 0;  // максимально быстро, без эмуляции реального времени
     } else if (currentIndex + 1 < states.size()) {
-        const long delta = static_cast<long>(states[currentIndex + 1].timestamp) -
-                           static_cast<long>(state.timestamp);
+        const qint64 delta = states[currentIndex + 1].timestamp - state.timestamp;
         if (delta > 0 && delta < 1000) {
             delayMs = std::max(1, static_cast<int>(std::lround(delta / replaySpeed)));
         }
