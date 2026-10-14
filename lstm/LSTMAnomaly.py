@@ -234,7 +234,7 @@ class LSTMAnomaly:
                 return -1
 
             data = df[self.cols].values.astype(float)
-            return self._detect(data)
+            return self._detect(data)[0]  # только число аномалий
 
         except Exception as e:
             eprint(f"Unhandled error in predict(): {e}")
@@ -252,13 +252,15 @@ class LSTMAnomaly:
             data = np.asarray(rows, dtype=float)
             if data.ndim != 2 or data.shape[1] < len(self.cols):
                 eprint(f"Error: bad rows shape {data.shape if hasattr(data, 'shape') else rows}")
-                return -1
+                return []
             data = data[:, :len(self.cols)]
-            return self._detect(data)
+            # Возвращаем индексы пробойных точек (пустой список, если их нет
+            # или произошла ошибка) — C++ пишет в CSV только эти точки.
+            return self._detect(data)[1]
         except Exception as e:
             eprint(f"Unhandled error in predict_rows(): {e}")
             traceback.print_exc()
-            return -1
+            return []
 
     def _detect(self, data):
         """Общая логика детекции по массиву (N, len(cols))."""
@@ -306,7 +308,9 @@ class LSTMAnomaly:
         if anomaly_count:
             print(f">>> anomaly window indices (first 10): {preview}",
                   flush=True)
-        return anomaly_count
+        # Возвращаем и число аномалий, и индексы пробойных точек — чтобы
+        # C++ мог записать в CSV только их, а не всё окно целиком.
+        return anomaly_count, [int(i) for i in idx]
 
 
 def main():

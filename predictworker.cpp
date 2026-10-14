@@ -13,12 +13,12 @@ PredictWorker::PredictWorker(void* instance, QObject* parent)
 
 void PredictWorker::runPrediction(const QVector<double>& packed) {
     if (!pInstance) {
-        emit finished(-1);
+        emit finished(QVector<int>());
         return;
     }
     if (packed.isEmpty() || packed.size() % 3 != 0) {
         qWarning() << "[PredictWorker] bad packed data size:" << packed.size();
-        emit finished(-1);
+        emit finished(QVector<int>());
         return;
     }
 
@@ -41,14 +41,23 @@ void PredictWorker::runPrediction(const QVector<double>& packed) {
     PyObject* result = PyObject_CallMethod(instance, "predict_rows", "(O)", rows);
     Py_DECREF(rows);
 
-    int value = -1;
+    // predict_rows() возвращает список индексов пробойных точек.
+    QVector<int> indices;
     if (result) {
-        value = PyLong_Check(result) ? static_cast<int>(PyLong_AsLong(result)) : -1;
+        if (PyList_Check(result)) {
+            const Py_ssize_t n = PyList_Size(result);
+            indices.reserve(static_cast<int>(n));
+            for (Py_ssize_t i = 0; i < n; ++i) {
+                PyObject* item = PyList_GET_ITEM(result, i);
+                if (PyLong_Check(item))
+                    indices.append(static_cast<int>(PyLong_AsLong(item)));
+            }
+        }
         Py_DECREF(result);
     } else {
         PyErr_Print();
     }
 
     PyGILState_Release(gstate);
-    emit finished(value);
+    emit finished(indices);
 }

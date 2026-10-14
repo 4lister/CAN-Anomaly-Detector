@@ -493,6 +493,11 @@ in memory (`speed`, `rpm`, `gear`) and passed to the persistent
 predict worker thread, which calls `LSTMAnomaly.predict_rows()` —
 no intermediate CSV file is written.
 
+`predict_rows()` returns the indices of the points that crossed the threshold
+inside a dense zone, and only those points are appended to the output CSV
+(`timestamp,speed,rpm,gear`). A window with no anomaly contributes nothing, so
+a clean capture yields a file with just the header.
+
 The process exits when the file has been fully read **and** the last
 prediction has completed.
 

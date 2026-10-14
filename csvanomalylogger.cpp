@@ -6,6 +6,9 @@ CsvAnomalyLogger::CsvAnomalyLogger(const QString& filename) : file(filename) {
     if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         stream = new QTextStream(&file);
         *stream << "timestamp,speed,rpm,gear\n";
+        // Сбрасываем заголовок на диск сразу: иначе при отсутствии аномалий
+        // буфер так и не запишется, и файл останется пустым (0 байт).
+        stream->flush();
     } else {
         stream = nullptr;
     }

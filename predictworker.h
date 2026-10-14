@@ -22,7 +22,8 @@ public Q_SLOTS:
     void runPrediction(const QVector<double>& packed);
 
 Q_SIGNALS:
-    void finished(int result);
+    // Индексы пробойных точек внутри окна (пустой вектор — аномалий нет).
+    void finished(const QVector<int>& anomalyIndices);
 
 private:
     void* pInstance;

@@ -70,9 +70,10 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& pythonPath,
     }
     Py_DECREF(setup);
 
-    // Тип аргумента windowReady должен быть зарегистрирован в QMetaType,
-    // иначе Qt не доставит его в queued-соединении с worker-потоком.
+    // Типы аргументов сигналов должны быть зарегистрированы в QMetaType,
+    // иначе Qt не доставит их в queued-соединениях с worker-потоком.
     qRegisterMetaType<QVector<double>>("QVector<double>");
+    qRegisterMetaType<QVector<int>>("QVector<int>");
 
     // Один worker-поток на всё время работы: инференс идёт последовательно
     // под GIL, создание нового потока на каждое окно было лишним overhead.
@@ -83,13 +84,16 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& pythonPath,
     connect(this, &AnomalyPredictorLSTM::windowReady,
             worker, &PredictWorker::runPrediction, Qt::QueuedConnection);
     connect(worker, &PredictWorker::finished,
-            this, [this](int result) {
-                qDebug() << "[Predictor] Prediction complete. Result:" << result;
-                lastPredictionWasAnomaly = (result > 0);
+            this, [this](const QVector<int>& anomalyIndices) {
+                qDebug() << "[Predictor] Prediction complete. Anomalies:"
+                         << anomalyIndices.size();
+                lastPredictionWasAnomaly = !anomalyIndices.isEmpty();
                 if (lastPredictionWasAnomaly) {
                     QMutexLocker locker(&mut);
-                    for (const auto& state : recentStates) {
-                        notifyAnomalySubscribers(state);
+                    // Пишем только пробойные точки зафиксированного окна.
+                    for (int idx : anomalyIndices) {
+                        if (idx >= 0 && idx < static_cast<int>(lastWindowStates.size()))
+                            notifyAnomalySubscribers(lastWindowStates[static_cast<size_t>(idx)]);
                     }
                 }
                 busy = false;
@@ -165,6 +169,9 @@ void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
             packed.append(static_cast<double>(s.gear));
         }
         lastPredictionIndex = dataQueue.size();
+        // Фиксируем окно, уходящее в предсказание, чтобы индексы пробоев
+        // от worker'а сопоставились с теми же точками (recentStates дальше движется).
+        lastWindowStates = recentStates;
     }
 
     emit windowReady(packed);

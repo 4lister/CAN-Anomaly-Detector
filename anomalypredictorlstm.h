@@ -46,6 +46,10 @@ private:
     mutable QMutex mut;
     QList<IAnomalySubscriber*> anomalySubscribers;
     std::deque<CarState> recentStates;
+    // Снимок окна, ушедшего в предсказание. recentStates продолжает двигаться,
+    // пока worker считает, поэтому индексы пробоев сопоставляем с этим
+    // зафиксированным снимком, а не с актуальным recentStates.
+    std::deque<CarState> lastWindowStates;
 
     PyObject* pModule;
     PyObject* pDict;
