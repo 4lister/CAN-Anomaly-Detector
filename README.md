@@ -434,6 +434,12 @@ chunk — a clearer demonstration than the within-Mazda6 city→highway case.
 > Only `speed`/`rpm` are used, because cross-vehicle datasets rarely share a
 > decoded `gear` signal.
 
+At the detector level, that drift shows up as a flood of **false anomalies** —
+the frozen Mazda6 model flags 1284 windows on the BMW drive (red dots), most of
+them legitimate BMW maneuvers rather than real faults:
+
+![Anomaly detection on BMW M235i (Mazda6-trained model)](docs/bmw_anomaly.png)
+
 #### Before vs after fine-tuning — fewer false alarms
 
 `bmw_before_after.py` ties this back to the detector. The cross-vehicle drift
