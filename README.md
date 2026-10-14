@@ -222,6 +222,19 @@ pass it to qmake:
 qmake PYTHON=/path/to/python anomaly_processor.pro
 ```
 
+On Windows `cmd.exe` can mangle the quotes in the `$$system($$PYTHON -c "...")`
+auto-detection, leaving the Python paths empty. In that case pass them
+explicitly (values come from `python -c` above, or just point at the interpreter
+that has the headers/import library):
+
+```powershell
+qmake anomaly_processor.pro `
+  PY_INC=C:/Users/you/Python311/include `
+  PY_VERTAG=311 `
+  PY_LIBDIR=C:/Users/you/Python311/libs
+mingw32-make -j4
+```
+
 ### 3. Install Python dependencies
 
 Pinned, tested versions are in `lstm/requirements.txt`:

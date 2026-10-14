@@ -27,20 +27,23 @@ isEmpty(PYTHON) {
     else:  PYTHON = python3
 }
 
-PY_INC    = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_path('include'))")
-PY_LDVER  = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LDVERSION') or '')")
-PY_VERTAG = $$system($$PYTHON -c "import sysconfig; print((sysconfig.get_config_var('VERSION') or '').replace('.',''))")
+# Значения можно задать вручную (qmake PY_INC=... PY_VERTAG=... PY_LIBDIR=...);
+# иначе они определяются через интерпретатор. Ручной путь нужен на Windows,
+# где cmd.exe ломает кавычки в $$system($$PYTHON -c "...").
+isEmpty(PY_INC):    PY_INC    = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_path('include'))")
+isEmpty(PY_VERTAG): PY_VERTAG = $$system($$PYTHON -c "import sysconfig; print((sysconfig.get_config_var('VERSION') or '').replace('.',''))")
 
-isEmpty(PY_INC): error("Python headers not found. Is '$$PYTHON' on PATH? Override with qmake PYTHON=...")
+isEmpty(PY_INC): error("Python headers not found. Is '$$PYTHON' on PATH? Override with qmake PYTHON=... or PY_INC=... PY_VERTAG=... PY_LIBDIR=...")
 INCLUDEPATH += "$$PY_INC"
 
 win32 {
     # On Windows the import library lives in <base>/libs as pythonXY.lib.
-    PY_LIBDIR = $$system($$PYTHON -c "import sys, os; print(os.path.join(sys.base_prefix, 'libs'))")
+    isEmpty(PY_LIBDIR): PY_LIBDIR = $$system($$PYTHON -c "import sys, os; print(os.path.join(sys.base_prefix, 'libs'))")
     LIBS += -L"$$PY_LIBDIR" -lpython$$PY_VERTAG
 } else {
     # Linux / macOS: use the configured LIBDIR and ABI-tagged lib name.
-    PY_LIBDIR = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+    isEmpty(PY_LDVER):  PY_LDVER  = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LDVERSION') or '')")
+    isEmpty(PY_LIBDIR): PY_LIBDIR = $$system($$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
     LIBS += -L"$$PY_LIBDIR" -lpython$$PY_LDVER
 }
 
