@@ -18,6 +18,7 @@ A hybrid platform for anomaly detection on vehicle CAN bus data. The system arch
 - [Project Structure](#project-structure)
 - [Installation](#installation)
 - [Quick start: LSTM detector standalone](#quick-start-lstm-detector-standalone-no-c-build)
+- [Quick start: full C++ pipeline](#quick-start-full-c-cpp-pipeline)
 - [Retraining the model](#retraining-the-model)
 - [Online fine-tuning (IncLSTM-inspired)](#online-fine-tuning-inclstm-inspired)
 - [Usage (full C++ pipeline)](#usage-full-c-pipeline)
@@ -351,6 +352,48 @@ The prediction still tracks `vehicle_speed` well, so the error never rises and
 *consistency between wheel speeds*, which this single-signal speed forecast
 cannot see — detecting it needs a multivariate model over the wheel-speed
 channels. This matches the limitation noted in the original project's evaluation.
+
+---
+
+## Quick start: full C++ pipeline (Qt + embedded Python)
+
+The C++ binary drives the same LSTM detector over a CSV via `FileReceiver`,
+embedding CPython and calling `predict_rows()` on a worker thread — no
+intermediate CSV. Verified on Windows (Qt 6.5.3 + MinGW 13.1 + Python 3.11).
+
+**1. Set up PATH** (Qt DLLs, MinGW runtime and `python311.dll` — without this
+the exe will not start; adjust the Python dir to your install):
+
+```powershell
+cd C:\path\to\CAN-Anomaly-Detector
+$env:PATH = "C:\Qt\6.5.3\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;C:\Users\<you>\Python311;" + $env:PATH
+$env:QT_FORCE_STDERR_LOGGING = "1"      # show DATA:/[Main] in the console
+$env:QT_ASSUME_STDERR_HAS_CONSOLE = "1"
+```
+
+**2. Make a small fault slice** (rows 926–1103 of `input.csv` carry `speed = 555`):
+
+```powershell
+$f = Get-Content lstm\data\input.csv
+$f[0..3000] | Set-Content test_fault.csv
+```
+
+**3. Run it** (fast — `--replay-speed 5`):
+
+```powershell
+.\release\anomaly_processor.exe -p . -i test_fault.csv -o anomalies_fault.csv `
+    --venv-site-packages lstm\.venv311\Lib\site-packages --replay-speed 5
+```
+
+**4. Check the result** — the log prints `>>> Python: anomalies = 121`, and the
+CSV holds one row per anomalous point (121 rows, not the whole 300-row window):
+
+```powershell
+(Get-Content anomalies_fault.csv | Measure-Object -Line).Lines   # → 122 (header + 121)
+```
+
+The process exits on its own with `[Main] Все данные обработаны. Завершение.`
+To rebuild after changing the `.pro`, see [Usage (full C++ pipeline)](#usage-full-c-pipeline).
 
 ---
 
