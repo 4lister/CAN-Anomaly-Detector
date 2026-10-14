@@ -8,12 +8,16 @@
 #include "predictworker.h"
 #include <QDebug>
 
-PredictWorker::PredictWorker(void* instance, const QString& csvPath)
-    : pInstance(instance), csvPath(csvPath) {}
+PredictWorker::PredictWorker(void* instance, QObject* parent)
+    : QObject(parent), pInstance(instance) {}
 
-void PredictWorker::run() {
-    qDebug() << "[PredictWorker] run()" << csvPath;
+void PredictWorker::runPrediction(const QVector<double>& packed) {
     if (!pInstance) {
+        emit finished(-1);
+        return;
+    }
+    if (packed.isEmpty() || packed.size() % 3 != 0) {
+        qWarning() << "[PredictWorker] bad packed data size:" << packed.size();
         emit finished(-1);
         return;
     }
@@ -21,18 +25,30 @@ void PredictWorker::run() {
     PyGILState_STATE gstate = PyGILState_Ensure();
     PyObject* instance = static_cast<PyObject*>(pInstance);
 
-    // Передаём в Python путь к окну, которое только что записал C++.
-    PyObject* result = PyObject_CallMethod(
-        instance, "predict", "s", csvPath.toUtf8().constData());
-    if (!result) {
-        PyErr_Print();
-        PyGILState_Release(gstate);
-        emit finished(-1);
-        return;
+    // Собираем список списков [[speed, rpm, gear], ...] и передаём в
+    // LSTMAnomaly.predict_rows() — минуя запись/чтение CSV-файла.
+    const int cols = 3;
+    const int n = packed.size() / cols;
+    PyObject* rows = PyList_New(n);
+    for (int i = 0; i < n; ++i) {
+        PyObject* row = PyList_New(cols);
+        for (int c = 0; c < cols; ++c) {
+            PyList_SET_ITEM(row, c, PyFloat_FromDouble(packed[i * cols + c]));
+        }
+        PyList_SET_ITEM(rows, i, row);
     }
 
-    int value = PyLong_Check(result) ? PyLong_AsLong(result) : -1;
-    Py_DECREF(result);
+    PyObject* result = PyObject_CallMethod(instance, "predict_rows", "(O)", rows);
+    Py_DECREF(rows);
+
+    int value = -1;
+    if (result) {
+        value = PyLong_Check(result) ? static_cast<int>(PyLong_AsLong(result)) : -1;
+        Py_DECREF(result);
+    } else {
+        PyErr_Print();
+    }
+
     PyGILState_Release(gstate);
     emit finished(value);
 }

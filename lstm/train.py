@@ -88,6 +88,35 @@ def main():
     model.model.save('longlong.h5')
     print(">> saved longlong.h5", flush=True)
 
+    # Сохраняем эталон нормализации (mx) и фиксированный порог ошибки,
+    # чтобы инференс (LSTMAnomaly.setup) не зависел от наличия train-файла
+    # и не пересчитывал порог заново при каждом запуске.
+    threshold_percentile = float(cfg.get('anomaly', {}).get('threshold_percentile', 99.9))
+    print(">> computing fixed threshold from train reconstruction error...", flush=True)
+    n_sample = 30000
+    n_windows = len(windows)
+    rng = np.random.default_rng(0)
+    count = min(n_sample, n_windows)
+    starts = rng.choice(n_windows, size=count, replace=False)
+    sw = windows[starts]
+    sx = sw[:, :-1]
+    sy = sw[:, -1, 0]
+    sp = np.asarray(model.model.predict(sx, verbose=0)).reshape(-1)
+    sp = sp - np.median(sp - sy)
+    sdev = np.abs(sp - sy)
+    fixed_threshold = float(np.percentile(sdev, threshold_percentile))
+
+    norm = {
+        "columns": cols,
+        "mx": mx.tolist(),
+        "fixed_threshold": fixed_threshold,
+        "threshold_percentile": threshold_percentile,
+    }
+    with open('normalization.json', 'w') as f:
+        json.dump(norm, f, indent=2)
+    print(f">> saved normalization.json: mx={mx.tolist()}, "
+          f"threshold={fixed_threshold:.5f}", flush=True)
+
 
 if __name__ == '__main__':
     main()

@@ -49,9 +49,8 @@ win32 {
 
 
 SOURCES += \
-    asyncpredictor.cpp \
     autodetectingreceiver.cpp \
-    csvalomalylogger.cpp \
+    csvanomalylogger.cpp \
         main.cpp \
     mazda6cardata.cpp \
     icardata.cpp \
@@ -79,7 +78,6 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
 
 HEADERS += \
-    asyncpredictor.h \
     autodetectingreceiver.h \
     csvanomalylogger.h \
     icansubscriber.h \

@@ -7,7 +7,6 @@
 
 #include "anomalypredictorlstm.h"
 #include "csvanomalylogger.h"
-#include "asyncpredictor.h"
 #include "filereceiver.h"
 #include "mazda6cardata.h"
 #include <QDebug>
@@ -30,9 +29,6 @@ int main(int argc, char *argv[]) {
     QCommandLineOption sourceOpt(
         {"i", "input"},
         "CSV с исходными данными для проигрывания.", "file");
-    QCommandLineOption workOpt(
-        {"w", "work"},
-        "CSV-файл окна, который C++ пишет, а Python читает.", "file");
     QCommandLineOption anomaliesOpt(
         {"o", "output"},
         "CSV для записи обнаруженных аномалий.", "file");
@@ -45,7 +41,6 @@ int main(int argc, char *argv[]) {
 
     parser.addOption(projectDirOpt);
     parser.addOption(sourceOpt);
-    parser.addOption(workOpt);
     parser.addOption(anomaliesOpt);
     parser.addOption(lstmDirOpt);
     parser.addOption(venvOpt);
@@ -59,9 +54,6 @@ int main(int argc, char *argv[]) {
     const QString inputCsv = parser.isSet(sourceOpt)
         ? parser.value(sourceOpt)
         : lstmDir + "/data/input.csv";
-    const QString workCsv = parser.isSet(workOpt)
-        ? parser.value(workOpt)
-        : lstmDir + "/data/_window.csv";
     const QString anomaliesCsv = parser.isSet(anomaliesOpt)
         ? parser.value(anomaliesOpt)
         : projectDir + "/anomalies.csv";
@@ -81,7 +73,6 @@ int main(int argc, char *argv[]) {
     qInfo() << "[Main] project-dir:" << projectDir;
     qInfo() << "[Main] lstm-dir   :" << lstmDir;
     qInfo() << "[Main] input      :" << inputCsv;
-    qInfo() << "[Main] work file  :" << workCsv;
     qInfo() << "[Main] anomalies  :" << anomaliesCsv;
 
     if (!QFileInfo::exists(inputCsv)) {
@@ -93,7 +84,7 @@ int main(int argc, char *argv[]) {
     FileReceiver* dataReceiver = new FileReceiver(inputCsv, &dataRows);
 
     AnomalyPredictorLSTM* predictor =
-        new AnomalyPredictorLSTM(workCsv, pythonPath, "LSTMAnomaly", lstmDir);
+        new AnomalyPredictorLSTM(pythonPath, "LSTMAnomaly", lstmDir);
     CsvAnomalyLogger* logger = new CsvAnomalyLogger(anomaliesCsv);
     predictor->addAnomalySubscriber(logger);
 

@@ -84,9 +84,6 @@ moc_predefs.h
 __pycache__/
 .venv*/
 
-# Рабочий файл окна, который пишет C++ для Python
-lstm/data/_window.csv
-
 # Бэкапы модели и логи обучения
 *.bak
 lstm/train.log

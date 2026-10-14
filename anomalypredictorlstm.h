@@ -7,9 +7,8 @@
 
 #include <Python.h>
 #include <QObject>
-#include <QBuffer>
-#include <QTextStream>
 #include <QMutex>
+#include <QVector>
 #include "anomalypredictor.h"
 #include "icansubscriber.h"
 #include <queue>
@@ -17,15 +16,17 @@
 #include <atomic>
 #include <deque>
 
+class PredictWorker;
+class QThread;
 
 class AnomalyPredictorLSTM : public AnomalyPredictor, public ICanSubscriber {
     Q_OBJECT
 
 public:
-    explicit AnomalyPredictorLSTM(const QString& inputCsvPath,
-                                  const QString& pythonPath,
+    explicit AnomalyPredictorLSTM(const QString& pythonPath,
                                   const QString& moduleName,
-                                  const QString& classPath);
+                                  const QString& classPath,
+                                  int windowSize = 300);
     ~AnomalyPredictorLSTM();
 
     void getNewDataToPredict(CarState state) override;
@@ -34,23 +35,14 @@ public:
     void addAnomalySubscriber(IAnomalySubscriber* subscriber);
     bool canAcceptNewData() const;
     void notifyAnomalySubscribers(const CarState& state);
-    void createCSVFile();
-private:
 
+private:
     size_t lastPredictionIndex = 0;
     int numPointsToPredict;
-    int currentPoints;
     bool lastPredictionWasAnomaly;
     std::atomic<bool> busy;
-    bool predictionCompleted;
-    bool predictionStarted;
-    //std::queue<CarState> dataQueue;
     std::mutex queueMutex;
-    std::deque<QString> dataQueue;
-    QBuffer buffer;
-    QString inputCsvPath;
-    PyThreadState* mainThreadState;
-    QTextStream* streamOut;
+    std::deque<CarState> dataQueue;
     mutable QMutex mut;
     QList<IAnomalySubscriber*> anomalySubscribers;
     std::deque<CarState> recentStates;
@@ -59,10 +51,17 @@ private:
     PyObject* pDict;
     PyObject* pClass;
     PyObject* pInstance;
+    PyThreadState* mainThreadState;
+
+    // Постоянный worker-поток для инференса (вместо создания QThread на каждое окно).
+    QThread* workerThread;
+    PredictWorker* worker;
 
 Q_SIGNALS:
     void anomalyDetected(CarState state);
     void predictionFinished();
+    // Окно данных (упакованное в плоский массив) для worker-потока.
+    void windowReady(const QVector<double>& packed);
 
 };
 

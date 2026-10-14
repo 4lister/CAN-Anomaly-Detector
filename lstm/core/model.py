@@ -91,7 +91,7 @@ class Model():
 		timer = Timer()
 		timer.start()
 		print('[Model] Predicting Point-by-Point...')
-		predicted = self.model.predict(data)
+		predicted = self.model.predict(data, verbose=0)
 		predicted = np.reshape(predicted, (predicted.size,))
 		timer.stop()
 		return predicted

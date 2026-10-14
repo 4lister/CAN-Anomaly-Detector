@@ -60,13 +60,13 @@ class LSTMAnomaly:
         self.normalise = True
         self.mx = None  # эталон нормализации (по обучающим данным, если доступны)
         self.fixed_threshold = None  # порог из распределения ошибки на train
-        self.make_plot = True  # в пуле процессов выключаем (нельзя писать один ano.png)
+        self.make_plot = False  # по умолчанию выключено (рендер графика на каждое окно — лишняя latency)
 
     def setup(self, base_dir=None):
         """Однократная инициализация: конфиг + модель + веса."""
         # Базовый каталог приходит из C++; если нет — берём каталог этого файла.
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
-        os.chdir(self.base_dir)
+        # Не меняем глобальный cwd — все пути строим относительно base_dir.
         print(">> base dir:", self.base_dir, flush=True)
 
         cfg_path = os.path.join(self.base_dir, 'config_new.json')
@@ -90,18 +90,31 @@ class LSTMAnomaly:
         self.k = float(anomaly_cfg.get('threshold_sigmas', 8.0))
         self.robust = bool(anomaly_cfg.get('robust', True))
 
-        # Эталон нормализации считаем по обучающему файлу один раз,
-        # чтобы масштаб совпадал с тем, на котором обучалась модель.
+        # Эталон нормализации (mx) и фиксированный порог берём из
+        # normalization.json — он сохраняется при обучении (train.py) и
+        # гарантирует, что масштаб совпадает с тренировочным, а инференс
+        # не зависит от наличия train-файла и не пересчитывает порог заново.
         train = None
-        train_file = os.path.join('data', self.configs['data']['filename'])
-        if os.path.exists(train_file):
-            train = pd.read_csv(train_file)[self.cols].values.astype(float)
-            self.mx = np.max(train, axis=0)
-            self.mx[self.mx == 0] = 1.0
-            print(">> normalisation reference from", train_file, flush=True)
+        norm_path = os.path.join(self.base_dir, 'normalization.json')
+        if os.path.exists(norm_path):
+            with open(norm_path, 'r') as f:
+                norm = json.load(f)
+            self.mx = np.array(norm['mx'], dtype=float)
+            self.fixed_threshold = float(norm.get('fixed_threshold'))
+            print(f">> loaded normalization.json: mx={self.mx.tolist()}, "
+                  f"threshold={self.fixed_threshold:.5f}", flush=True)
         else:
-            eprint(">> WARNING: train file not found, "
-                   "will normalise per-window:", train_file)
+            eprint(">> WARNING: normalization.json not found, "
+                   "falling back to train-file stats")
+            train_file = os.path.join(self.base_dir, 'data', self.configs['data']['filename'])
+            if os.path.exists(train_file):
+                train = pd.read_csv(train_file)[self.cols].values.astype(float)
+                self.mx = np.max(train, axis=0)
+                self.mx[self.mx == 0] = 1.0
+                print(">> normalisation reference from", train_file, flush=True)
+            else:
+                eprint(">> WARNING: train file not found, "
+                       "will normalise per-window:", train_file)
 
         self.model = Model()
         self.model.build_model(self.configs)
@@ -110,7 +123,7 @@ class LSTMAnomaly:
 
         # Фиксированный порог из распределения ошибки на НОРМАЛЬНЫХ данных.
         # Так фолт в тест-файле не может «спрятаться» под собственный раздутый порог.
-        if train is not None:
+        if self.fixed_threshold is None and train is not None:
             self.fixed_threshold = self._train_threshold(train)
             print(f">> fixed threshold from train "
                   f"(p{self.threshold_percentile}) = {self.fixed_threshold:.5f}",
@@ -179,18 +192,35 @@ class LSTMAnomaly:
         не меньше density_min_count пробоев. Ловит прерывистые всплески
         (например, резкий разгон — серия коротких всплесков, а не один
         длинный участок), отсекая одиночные изолированные пробои.
+
+        Если окно данных короче density_window (типично для потокового
+        инференса на Qt, где окно ~300 точек → ~251 прогноз), параметры
+        масштабируются пропорционально длине ряда, чтобы правило оставалось
+        осмысленным, а не вырождалось в «всё или ничего».
         """
+        n = len(raw)
         w = self.density_window
-        if w <= 1 or self.density_min_count <= 1:
+        if w <= 1 or self.density_min_count <= 1 or n == 0:
             return raw
+        # Адаптация под длину ряда: окно не длиннее ряда, порог — пропорционально.
+        if w > n:
+            scale = n / w
+            w = n
+            min_count = max(1, int(round(self.density_min_count * scale)))
+        else:
+            min_count = self.density_min_count
         kernel = np.ones(w)
         local = np.convolve(raw.astype(float), kernel, mode='same')
-        dense = local >= self.density_min_count
+        dense = local >= min_count
         # Помечаем как аномалию только реальные пробои внутри плотных зон.
         return raw & dense
 
     def predict(self, csv_path):
-        """Анализирует окно, записанное C++, и возвращает число аномалий."""
+        """Анализирует окно, записанное C++ в CSV, и возвращает число аномалий.
+
+        Для потокового инференса на Qt предпочтительнее predict_rows(),
+        который принимает данные напрямую без промежуточного файла.
+        """
         print(">> predict on", csv_path, flush=True)
         try:
             if not os.path.exists(csv_path):
@@ -204,58 +234,79 @@ class LSTMAnomaly:
                 return -1
 
             data = df[self.cols].values.astype(float)
-            windows = self._build_windows(data)
-            if windows is None:
-                print(">> not enough rows for a window, skip", flush=True)
-                return 0
-
-            x = windows[:, :-1]
-            y = windows[:, -1, 0]  # прогнозируем первую колонку
-
-            predictions = self.model.predict_point_by_point(x)
-            predictions = np.asarray(predictions).reshape(-1)
-
-            # У модели есть систематическое смещение (prediction идёт по форме,
-            # но сдвинут). Убираем его робастно — по медиане, чтобы редкие
-            # аномалии не влияли на оценку сдвига. Тогда ошибка реконструкции
-            # отражает расхождение формы, а не постоянный bias.
-            bias = np.median(predictions - y)
-            predictions = predictions - bias
-            print(f">> bias correction = {bias:.4f}", flush=True)
-
-            deviation = np.abs(predictions - y)
-            # Фиксированный порог из train-распределения (если посчитан в setup),
-            # иначе фолбэк на адаптивный по текущему файлу.
-            if self.fixed_threshold is not None:
-                threshold = self.fixed_threshold
-            else:
-                threshold = self._threshold(deviation)
-            raw = deviation > threshold
-            anomalies = self._density_filter(raw)
-            anomaly_count = int(np.sum(anomalies))
-            filtered_out = int(np.sum(raw) - anomaly_count)
-
-            if self.make_plot:
-                out_plot = os.path.join(self.base_dir, 'ano.png')
-                plot_results(predictions, y, deviation, threshold, anomalies, out_plot)
-
-            idx = np.where(anomalies)[0]
-            preview = ", ".join(str(int(i)) for i in idx[:10])
-            print(f">>> Python: anomalies = {anomaly_count} "
-                  f"(threshold={threshold:.5f} "
-                  f"[{'fixed' if self.fixed_threshold is not None else 'adaptive'}], "
-                  f"density {self.density_min_count}/{self.density_window}, "
-                  f"raw_crossings={int(np.sum(raw))})",
-                  flush=True)
-            if anomaly_count:
-                print(f">>> anomaly window indices (first 10): {preview}",
-                      flush=True)
-            return anomaly_count
+            return self._detect(data)
 
         except Exception as e:
             eprint(f"Unhandled error in predict(): {e}")
             traceback.print_exc()
             return -1
+
+    def predict_rows(self, rows):
+        """Анализ окна, переданного напрямую из C++ (список списков значений
+        в порядке columns конфига, например [[speed, rpm, gear], ...]).
+
+        Убирает запись/чтение промежуточного CSV-файла — основной путь
+        для потокового инференса на Qt.
+        """
+        try:
+            data = np.asarray(rows, dtype=float)
+            if data.ndim != 2 or data.shape[1] < len(self.cols):
+                eprint(f"Error: bad rows shape {data.shape if hasattr(data, 'shape') else rows}")
+                return -1
+            data = data[:, :len(self.cols)]
+            return self._detect(data)
+        except Exception as e:
+            eprint(f"Unhandled error in predict_rows(): {e}")
+            traceback.print_exc()
+            return -1
+
+    def _detect(self, data):
+        """Общая логика детекции по массиву (N, len(cols))."""
+        windows = self._build_windows(data)
+        if windows is None:
+            print(">> not enough rows for a window, skip", flush=True)
+            return 0
+
+        x = windows[:, :-1]
+        y = windows[:, -1, 0]  # прогнозируем первую колонку
+
+        predictions = self.model.predict_point_by_point(x)
+        predictions = np.asarray(predictions).reshape(-1)
+
+        # У модели есть систематическое смещение (prediction идёт по форме,
+        # но сдвинут). Убираем его робастно — по медиане, чтобы редкие
+        # аномалии не влияли на оценку сдвига. Тогда ошибка реконструкции
+        # отражает расхождение формы, а не постоянный bias.
+        bias = np.median(predictions - y)
+        predictions = predictions - bias
+
+        deviation = np.abs(predictions - y)
+        # Фиксированный порог из train-распределения (если посчитан в setup),
+        # иначе фолбэк на адаптивный по текущему файлу.
+        if self.fixed_threshold is not None:
+            threshold = self.fixed_threshold
+        else:
+            threshold = self._threshold(deviation)
+        raw = deviation > threshold
+        anomalies = self._density_filter(raw)
+        anomaly_count = int(np.sum(anomalies))
+
+        if self.make_plot:
+            out_plot = os.path.join(self.base_dir, 'ano.png')
+            plot_results(predictions, y, deviation, threshold, anomalies, out_plot)
+
+        idx = np.where(anomalies)[0]
+        preview = ", ".join(str(int(i)) for i in idx[:10])
+        print(f">>> Python: anomalies = {anomaly_count} "
+              f"(threshold={threshold:.5f} "
+              f"[{'fixed' if self.fixed_threshold is not None else 'adaptive'}], "
+              f"density {self.density_min_count}/{self.density_window}, "
+              f"raw_crossings={int(np.sum(raw))})",
+              flush=True)
+        if anomaly_count:
+            print(f">>> anomaly window indices (first 10): {preview}",
+                  flush=True)
+        return anomaly_count
 
 
 def main():
@@ -265,7 +316,7 @@ def main():
     if len(sys.argv) > 1:
         test_file = sys.argv[1]
     else:
-        test_file = os.path.join('data', ano.configs['data']['filename_test'])
+        test_file = os.path.join(ano.base_dir, 'data', ano.configs['data']['filename_test'])
     print("anomalies:", ano.predict(test_file))
 
 

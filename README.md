@@ -130,7 +130,6 @@ CAN-Anomaly-Detector/
 ├── datareceiverthread.{h,cpp}        # Thread wrapper for data receiver
 ├── cardataprocessorthread.{h,cpp}    # CAN frame processing thread
 ├── datarowfetcherthread.{h,cpp}      # Row fetching worker thread
-├── asyncpredictor.{h,cpp}            # Async anomaly predictor wrapper
 ├── predictworker.{h,cpp}             # Worker running predictor logic
 ├── lockers.{h,cpp}                   # Mutex / locking utilities
 │
@@ -154,7 +153,7 @@ CAN-Anomaly-Detector/
 ├── ano.png                           # Showcase detection plot
 │
 ├── # Python / ML  (lstm/)
-├── lstm/LSTMAnomaly.py               # Detector: setup() + predict() (bias, fixed threshold, density)
+├── lstm/LSTMAnomaly.py               # Detector: setup() + predict_rows() (bias, fixed threshold, density)
 ├── lstm/train.py                     # Train / retrain the model (full-file window sampling)
 ├── lstm/incremental.py               # IncLSTM-inspired online fine-tuning + replay buffer
 ├── lstm/incremental_demo.py          # Drift-adaptation experiment
@@ -361,6 +360,12 @@ Sampling the full file instead of the first rows cut self-detections on the
 training set from ~6500 to ~430 (the remaining few are the most extreme
 high-speed transients).
 
+`train.py` also writes `normalization.json` — the normalisation maxima
+(`mx`) and the fixed error threshold (99.9th percentile of the bias-corrected
+reconstruction error on the training windows). `setup()` loads it at inference
+time, so detection no longer depends on the training CSV being present and
+never recomputes the threshold from the data it is scoring.
+
 ---
 
 ## Online fine-tuning (IncLSTM-inspired)
@@ -453,10 +458,14 @@ Paths are passed on the command line (no more hardcoded paths):
 | --- | --- | --- |
 | `-p, --project-dir` | Repo root (contains `lstm/`) | current dir |
 | `-i, --input` | Source CSV to replay | `<lstm>/data/input.csv` |
-| `-w, --work` | Window file C++ writes / Python reads | `<lstm>/data/_window.csv` |
 | `-o, --output` | Anomalies CSV | `<project>/anomalies.csv` |
 | `--lstm-dir` | Dir with module, config, model | `<project>/lstm` |
 | `--venv-site-packages` | Extra `site-packages` for `PYTHONPATH` | — |
+
+Each window of `numPointsToPredict` rows (300 by default) is packed
+in memory (`speed`, `rpm`, `gear`) and passed to the persistent
+predict worker thread, which calls `LSTMAnomaly.predict_rows()` —
+no intermediate CSV file is written.
 
 > Note: the `candump`, Arduino-serial and directory receivers exist as classes
 > but are **not yet wired into `main.cpp`** — only `FileReceiver` is active.
@@ -503,7 +512,7 @@ SLTL (Signal Linear Temporal Logic) allows temporal properties of vehicle signal
 No. The CSV datasets in `lstm/data/` (plus the standalone Python runner) support full offline testing — see the [Quick start](#quick-start-lstm-detector-standalone-no-c-build).
 
 **How is the LSTM model integrated into the C++ runtime?**
-`AnomalyPredictorLSTM` embeds a CPython interpreter via the **Python C API** (`Python.h`). At startup it imports `LSTMAnomaly` and calls `setup()` once (loads `longlong.h5`); per window it calls `predict()` on a worker thread holding the GIL. See `anomalypredictorlstm.cpp` / `predictworker.cpp`.
+`AnomalyPredictorLSTM` embeds a CPython interpreter via the **Python C API** (`Python.h`). At startup it imports `LSTMAnomaly` and calls `setup()` once (loads `longlong.h5` and `normalization.json`); per window it calls `predict_rows()` with the window data directly in memory, on a dedicated worker thread holding the GIL. See `anomalypredictorlstm.cpp` / `predictworker.cpp`.
 
 **Can I add a new detection algorithm?**
 Yes. Subclass `AnomalyPredictor` (see `anomalypredictor.h`), implement the required interface, and register the class in `main.cpp` or the processor thread setup.

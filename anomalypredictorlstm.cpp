@@ -2,24 +2,24 @@
 #include "predictworker.h"
 #include <QDateTime>
 #include <QDebug>
-#include <QFile>
 #include <QThread>
+#include <QVector>
+#include <QMetaType>
 #include <Python.h>
-#include <QTextStream>
 #include <icansubscriber.h>
 #include <QCoreApplication>
 
-AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& csvPath,
-                                           const QString& pythonPath,
+AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& pythonPath,
                                            const QString& moduleName,
-                                           const QString& classPath)
-    :lastPredictionIndex(0),
-    numPointsToPredict(300),
-    busy(false),
-    inputCsvPath(csvPath),
-    mainThreadState(nullptr),
-    streamOut(nullptr)
-
+                                           const QString& classPath,
+                                           int windowSize)
+    : lastPredictionIndex(0),
+      numPointsToPredict(windowSize > 0 ? windowSize : 300),
+      lastPredictionWasAnomaly(false),
+      busy(false),
+      pModule(nullptr), pDict(nullptr), pClass(nullptr), pInstance(nullptr),
+      mainThreadState(nullptr),
+      workerThread(nullptr), worker(nullptr)
 {
     qputenv("PYTHONPATH", pythonPath.toUtf8());  // кроссплатформенно (setenv — только POSIX)
 
@@ -70,17 +70,35 @@ AnomalyPredictorLSTM::AnomalyPredictorLSTM(const QString& csvPath,
     }
     Py_DECREF(setup);
 
-    mainThreadState = PyEval_SaveThread();
-    createCSVFile();
-}
+    // Тип аргумента windowReady должен быть зарегистрирован в QMetaType,
+    // иначе Qt не доставит его в queued-соединении с worker-потоком.
+    qRegisterMetaType<QVector<double>>("QVector<double>");
 
-void AnomalyPredictorLSTM::createCSVFile() {
-    buffer.setData(QByteArray());
-    if (!buffer.open(QIODevice::ReadWrite)) {
-        qWarning() << "Не удалось открыть внутренний буфер!";
-        return;
-    }
-    streamOut = new QTextStream(&buffer);
+    // Один worker-поток на всё время работы: инференс идёт последовательно
+    // под GIL, создание нового потока на каждое окно было лишним overhead.
+    workerThread = new QThread;
+    worker = new PredictWorker(pInstance);
+    worker->moveToThread(workerThread);
+
+    connect(this, &AnomalyPredictorLSTM::windowReady,
+            worker, &PredictWorker::runPrediction, Qt::QueuedConnection);
+    connect(worker, &PredictWorker::finished,
+            this, [this](int result) {
+                qDebug() << "[Predictor] Prediction complete. Result:" << result;
+                lastPredictionWasAnomaly = (result > 0);
+                if (lastPredictionWasAnomaly) {
+                    QMutexLocker locker(&mut);
+                    for (const auto& state : recentStates) {
+                        notifyAnomalySubscribers(state);
+                    }
+                }
+                busy = false;
+                emit predictionFinished();
+            });
+
+    workerThread->start();
+
+    mainThreadState = PyEval_SaveThread();  // освобождаем GIL для worker-потока
 }
 
 void AnomalyPredictorLSTM::addAnomalySubscriber(IAnomalySubscriber* subscriber) {
@@ -104,14 +122,10 @@ void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
     {
         QMutexLocker locker(&mut);
 
-        QString row = QDateTime::fromMSecsSinceEpoch(state.timestamp).toString("yyyy-MM-dd HH:mm:ss.zzz") + "," +
-                      QString::number(state.speed) + "," +
-                      QString::number(state.rpm) + "," +
-                      QString::number(state.gear) + "\n";
-
-        dataQueue.push_back(row);
-        if (dataQueue.size() > 66271) {
-            dataQueue.erase(dataQueue.begin(), dataQueue.begin() + (dataQueue.size() - 66271));
+        dataQueue.push_back(state);
+        const size_t maxQueue = static_cast<size_t>(numPointsToPredict) * 1000;
+        if (dataQueue.size() > maxQueue) {
+            dataQueue.erase(dataQueue.begin(), dataQueue.begin() + (dataQueue.size() - maxQueue));
         }
 
         recentStates.push_back(state);
@@ -120,14 +134,11 @@ void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
         }
 
         queueSize = dataQueue.size();
-
-        qDebug() << "DATA:" << state.speed << state.rpm << state.gear;
-        qDebug() << "Queue size now:" << queueSize;
-        qDebug() << "Busy status:" << busy.load();
+        qDebug() << "DATA:" << state.speed << state.rpm << state.gear
+                 << "| queue:" << queueSize << "| busy:" << busy.load();
     }
 
-    // Запускаем предсказание строго по 300 новых точек.
-    // Атомарно «захватываем» предсказание: только один поток пройдёт дальше.
+    // Запускаем предсказание строго по numPointsToPredict новых точек.
     if (queueSize - lastPredictionIndex < static_cast<size_t>(numPointsToPredict))
         return;
 
@@ -135,69 +146,41 @@ void AnomalyPredictorLSTM::getNewDataToPredict(CarState state) {
     if (!busy.compare_exchange_strong(expected, true))
         return;  // предсказание уже выполняется
 
+    // Снимаем срез последних numPointsToPredict точек и передаём worker'у
+    // напрямую в памяти, без промежуточного CSV-файла.
+    QVector<double> packed;
+    packed.reserve(numPointsToPredict * 3);
     {
-        std::deque<QString> snapshot;
-        {
-            QMutexLocker locker(&mut);
-            size_t start = dataQueue.size() - numPointsToPredict;
-            qDebug() << "Preparing snapshot from" << start << "to" << dataQueue.size();
-            for (size_t i = start; i < dataQueue.size(); ++i) {
-                snapshot.push_back(dataQueue[i]);
-            }
+        QMutexLocker locker(&mut);
+        size_t start = dataQueue.size() - numPointsToPredict;
+        for (size_t i = start; i < dataQueue.size(); ++i) {
+            const CarState& s = dataQueue[i];
+            packed.append(s.speed);
+            packed.append(static_cast<double>(s.rpm));
+            packed.append(static_cast<double>(s.gear));
         }
-
-        QFile file(inputCsvPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            qWarning() << "Не удалось открыть CSV-файл!";
-            busy = false;
-            return;
-        }
-
-        QTextStream out(&file);
-        out << "timestamp,vehicle_speed,vehicle_rpm,gear\n";
-        for (const auto& row : snapshot) {
-            out << row;
-        }
-        file.close();
-
         lastPredictionIndex = dataQueue.size();
-
-        QThread* thread = new QThread;
-        PredictWorker* worker = new PredictWorker(pInstance, inputCsvPath);
-        worker->moveToThread(thread);
-
-        QObject::connect(thread, &QThread::started, worker, &PredictWorker::run);
-
-        QObject::connect(worker, &PredictWorker::finished, this, [this](int result) {
-            qDebug() << "[Predictor] Prediction complete. Result:" << result;
-            lastPredictionWasAnomaly = (result > 0);
-            if (lastPredictionWasAnomaly) {
-                QMutexLocker locker(&mut);
-                for (const auto& state : recentStates) {
-                    notifyAnomalySubscribers(state);
-                }
-            }
-            busy = false;
-            emit predictionFinished();
-        });
-
-        QObject::connect(worker, &PredictWorker::finished, thread, &QThread::quit);
-        QObject::connect(thread, &QThread::finished, worker, &QObject::deleteLater);
-        QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-
-        thread->start();
     }
+
+    emit windowReady(packed);
 }
 
 AnomalyPredictorLSTM::~AnomalyPredictorLSTM() {
-    if (mainThreadState) {
-        PyEval_RestoreThread(mainThreadState);
+    // Останавливаем worker-поток.
+    if (workerThread) {
+        workerThread->quit();
+        workerThread->wait();
     }
+    delete worker;
+    delete workerThread;
 
-    delete streamOut;
+    if (mainThreadState)
+        PyEval_RestoreThread(mainThreadState);  // возвращаем GIL основному потоку
 
     Py_XDECREF(pInstance);
     Py_XDECREF(pClass);
     Py_XDECREF(pModule);
-    Py_Finalize();
+
+    if (Py_IsInitialized())
+        Py_Finalize();
 }

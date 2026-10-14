@@ -7,22 +7,25 @@
 
 #include <QObject>
 #include <QString>
+#include <QVector>
 
 class PredictWorker : public QObject {
     Q_OBJECT
 
 public:
-    explicit PredictWorker(void* instance, const QString& csvPath);
+    explicit PredictWorker(void* instance, QObject* parent = nullptr);
 
 public Q_SLOTS:
-    void run();
+    // Окно передаётся напрямую из памяти C++ (без промежуточного CSV).
+    // packed — плоский массив [s0, r0, g0, s1, r1, g1, ...] в порядке
+    // columns конфига (vehicle_speed, vehicle_rpm, gear).
+    void runPrediction(const QVector<double>& packed);
 
 Q_SIGNALS:
     void finished(int result);
 
 private:
     void* pInstance;
-    QString csvPath;
 };
 
 #endif // PREDICTWORKER_H
